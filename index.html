@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Azure DevOps Hub</title>
+  <link rel="stylesheet" href="css/styles.css" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css"
+        crossorigin="anonymous" referrerpolicy="no-referrer" />
+</head>
+<body class="theme-light">
+
+  <!-- Sidebar -->
+  <nav id="sidebar" class="sidebar">
+    <div class="sidebar-header">
+      <i class="fa-brands fa-windows"></i>
+      <span class="sidebar-brand">DevOps Hub</span>
+    </div>
+    <ul class="nav-list">
+      <li class="nav-item">
+        <a href="#/dashboard" class="nav-link" data-route="dashboard">
+          <i class="fa-solid fa-house"></i>
+          <span>Dashboard</span>
+        </a>
+      </li>
+      <li class="nav-item">
+        <a href="#/connections" class="nav-link" data-route="connections">
+          <i class="fa-solid fa-plug"></i>
+          <span>Connections</span>
+        </a>
+      </li>
+      <li class="nav-item">
+        <a href="#/projects" class="nav-link" data-route="projects">
+          <i class="fa-solid fa-folder-open"></i>
+          <span>Projects</span>
+        </a>
+      </li>
+      <li class="nav-item">
+        <a href="#/workitems" class="nav-link" data-route="workitems">
+          <i class="fa-solid fa-list-check"></i>
+          <span>Work Items</span>
+        </a>
+      </li>
+      <li class="nav-item">
+        <a href="#/pipelines" class="nav-link" data-route="pipelines">
+          <i class="fa-solid fa-rocket"></i>
+          <span>Pipelines</span>
+        </a>
+      </li>
+    </ul>
+    <div class="sidebar-footer">
+      <button id="theme-toggle" class="btn-icon" title="Toggle Theme">
+        <i class="fa-solid fa-moon"></i>
+      </button>
+    </div>
+  </nav>
+
+  <!-- Top Header -->
+  <header id="top-header" class="top-header">
+    <button id="sidebar-toggle" class="btn-icon sidebar-toggle" title="Toggle Sidebar">
+      <i class="fa-solid fa-bars"></i>
+    </button>
+    <h1 class="app-title"><i class="fa-brands fa-windows"></i> Azure DevOps Hub</h1>
+    <div class="header-controls">
+      <label for="org-selector" class="sr-only">Active Organization</label>
+      <select id="org-selector" class="org-selector" title="Select active organization">
+        <option value="">— All Organizations —</option>
+      </select>
+      <button id="refresh-btn" class="btn btn-secondary btn-sm" title="Refresh data">
+        <i class="fa-solid fa-rotate-right"></i> Refresh
+      </button>
+    </div>
+  </header>
+
+  <!-- Main Content -->
+  <main id="main-content" class="main-content">
+    <!-- Content is rendered here dynamically by app.js -->
+    <div id="page-container"></div>
+  </main>
+
+  <!-- Modal Overlay -->
+  <div id="modal-overlay" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+    <div class="modal">
+      <div class="modal-header">
+        <h2 id="modal-title" class="modal-title">Details</h2>
+        <button id="modal-close" class="btn-icon" aria-label="Close modal">
+          <i class="fa-solid fa-xmark"></i>
+        </button>
+      </div>
+      <div id="modal-body" class="modal-body"></div>
+    </div>
+  </div>
+
+  <!-- Toast Notifications -->
+  <div id="toast-container" class="toast-container" aria-live="polite"></div>
+
+  <!-- Scripts (order matters: api → connections → projects → workitems → pipelines → dashboard → app) -->
+  <script src="js/api.js"></script>
+  <script src="js/connections.js"></script>
+  <script src="js/projects.js"></script>
+  <script src="js/workitems.js"></script>
+  <script src="js/pipelines.js"></script>
+  <script src="js/dashboard.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
