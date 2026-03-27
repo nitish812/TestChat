@@ -2,7 +2,7 @@
  * connections.js — Connection Manager
  *
  * Manages Azure DevOps connections stored in localStorage.
- * Each connection:  { id, name, orgUrl, pat, active, createdAt }
+ * Each connection:  { id, name, orgUrl, pat, active, createdAt, defaultProject? }
  */
 
 const ConnectionsModule = (() => {
@@ -30,10 +30,12 @@ const ConnectionsModule = (() => {
 
   function getById(id) { return _load().find(c => c.id === id) || null; }
 
-  function add(name, orgUrl, pat) {
+  function add(name, orgUrl, pat, defaultProject) {
     const connections = _load();
     const id = 'conn_' + Date.now();
-    connections.push({ id, name, orgUrl: orgUrl.replace(/\/$/, ''), pat, active: true, createdAt: new Date().toISOString() });
+    const conn = { id, name, orgUrl: orgUrl.replace(/\/$/, ''), pat, active: true, createdAt: new Date().toISOString() };
+    if (defaultProject) conn.defaultProject = defaultProject;
+    connections.push(conn);
     _save(connections);
     return id;
   }
@@ -94,6 +96,13 @@ const ConnectionsModule = (() => {
             <input type="password" id="conn-pat" placeholder="••••••••••••••••" required autocomplete="new-password" />
             <span class="form-hint">PAT is stored in browser localStorage.</span>
           </div>
+          <div class="form-group">
+            <label for="conn-project">Default Project <span class="text-muted text-sm">(optional)</span></label>
+            <select id="conn-project" disabled>
+              <option value="">Enter URL &amp; PAT first…</option>
+            </select>
+            <span class="form-hint">Select a default project for this connection, or leave blank for no default.</span>
+          </div>
           <div id="conn-form-error" class="form-error mb-8 hidden"></div>
           <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
             <button type="submit" class="btn btn-primary" id="conn-save-btn">
@@ -139,6 +148,7 @@ const ConnectionsModule = (() => {
           <div class="connection-name">${_esc(c.name)}</div>
           <div class="connection-url">${_esc(c.orgUrl)}</div>
           <div class="connection-pat font-mono">PAT: ${maskPat(c.pat)}</div>
+          ${c.defaultProject ? `<div class="connection-url">Project: ${_esc(c.defaultProject)}</div>` : '<div class="connection-url text-muted">Project: All</div>'}
         </div>
         <div class="connection-actions">
           <label class="toggle-switch" title="${c.active !== false ? 'Active' : 'Inactive'}">
@@ -190,6 +200,8 @@ const ConnectionsModule = (() => {
     container.querySelector('#conn-pat').value = c.pat;
     container.querySelector('#conn-cancel-btn').classList.remove('hidden');
     container.querySelector('#conn-form-card').scrollIntoView({ behavior: 'smooth' });
+    // Populate project dropdown with saved defaultProject pre-selected
+    _fetchProjectsForDropdown(container, c.orgUrl, c.pat, c.defaultProject || '');
   }
 
   function _resetForm(container) {
@@ -201,6 +213,9 @@ const ConnectionsModule = (() => {
     container.querySelector('#conn-cancel-btn').classList.add('hidden');
     container.querySelector('#conn-form-error').classList.add('hidden');
     container.querySelector('#conn-test-result').textContent = '';
+    const projSel = container.querySelector('#conn-project');
+    projSel.innerHTML = '<option value="">Enter URL &amp; PAT first…</option>';
+    projSel.disabled = true;
   }
 
   function _bindFormEvents(container) {
@@ -212,6 +227,15 @@ const ConnectionsModule = (() => {
     const testResult  = container.querySelector('#conn-test-result');
 
     cancelBtn.addEventListener('click', () => _resetForm(container));
+
+    // Auto-fetch projects on blur when both URL and PAT have values
+    function _tryFetchProjects() {
+      const url = container.querySelector('#conn-url').value.trim();
+      const pat = container.querySelector('#conn-pat').value.trim();
+      if (url && pat) _fetchProjectsForDropdown(container, url, pat, '');
+    }
+    container.querySelector('#conn-url').addEventListener('blur', _tryFetchProjects);
+    container.querySelector('#conn-pat').addEventListener('blur', _tryFetchProjects);
 
     testBtn.addEventListener('click', async () => {
       const url = container.querySelector('#conn-url').value.trim();
@@ -226,6 +250,9 @@ const ConnectionsModule = (() => {
 
       if (res.valid) {
         testResult.innerHTML = `<span style="color:var(--color-success)"><i class="fa-solid fa-circle-check"></i> Connected (${res.projectCount} project${res.projectCount !== 1 ? 's' : ''})</span>`;
+        // Populate project dropdown after successful test
+        const currentProject = container.querySelector('#conn-project').value;
+        _fetchProjectsForDropdown(container, url, pat, currentProject);
       } else {
         testResult.innerHTML = `<span style="color:var(--color-danger)"><i class="fa-solid fa-circle-xmark"></i> ${_esc(res.message)}</span>`;
       }
@@ -235,10 +262,11 @@ const ConnectionsModule = (() => {
       e.preventDefault();
       errorEl.classList.add('hidden');
 
-      const editId = container.querySelector('#conn-edit-id').value;
-      const name   = container.querySelector('#conn-name').value.trim();
-      const url    = container.querySelector('#conn-url').value.trim();
-      const pat    = container.querySelector('#conn-pat').value.trim();
+      const editId        = container.querySelector('#conn-edit-id').value;
+      const name          = container.querySelector('#conn-name').value.trim();
+      const url           = container.querySelector('#conn-url').value.trim();
+      const pat           = container.querySelector('#conn-pat').value.trim();
+      const defaultProject= container.querySelector('#conn-project').value;
 
       if (!name || !url || !pat) {
         errorEl.textContent = 'All fields are required.';
@@ -260,10 +288,10 @@ const ConnectionsModule = (() => {
       }
 
       if (editId) {
-        update(editId, { name, orgUrl: url, pat });
+        update(editId, { name, orgUrl: url, pat, defaultProject: defaultProject || undefined });
         App.showToast('Connection updated successfully.', 'success');
       } else {
-        add(name, url, pat);
+        add(name, url, pat, defaultProject || undefined);
         App.showToast('Connection added successfully.', 'success');
       }
 
@@ -271,6 +299,32 @@ const ConnectionsModule = (() => {
       _resetForm(container);
       _renderList(container);
     });
+  }
+
+  /**
+   * Fetch projects from the API and populate the #conn-project dropdown.
+   * @param {Element} container
+   * @param {string} url       Organisation URL
+   * @param {string} pat       PAT
+   * @param {string} selected  Value to pre-select (may be empty string)
+   */
+  async function _fetchProjectsForDropdown(container, url, pat, selected) {
+    const projSel = container.querySelector('#conn-project');
+    projSel.disabled = true;
+    projSel.innerHTML = '<option value="">Loading projects…</option>';
+
+    const result = await AzureApi.getProjects(url, pat);
+
+    if (result.error) {
+      projSel.innerHTML = '<option value="">Could not load projects</option>';
+      return;
+    }
+
+    const projects = result.value || [];
+    projSel.innerHTML =
+      '<option value="">All Projects (no default)</option>' +
+      projects.map(p => `<option value="${_esc(p.name)}"${p.name === selected ? ' selected' : ''}>${_esc(p.name)}</option>`).join('');
+    projSel.disabled = false;
   }
 
   /** Simple HTML-escape for rendering user data. */

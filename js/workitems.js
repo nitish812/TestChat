@@ -3,6 +3,7 @@
  *
  * Displays work items for a selected project with filtering,
  * pagination (50 per page), and a detail modal.
+ * Supports "Single Project" and "All Connections" modes.
  */
 
 const WorkItemsModule = (() => {
@@ -11,12 +12,16 @@ const WorkItemsModule = (() => {
   let _items       = [];
   let _currentPage = 1;
   let _context     = null;   // { connId, project }
+  let _mode        = 'single'; // 'single' | 'all'
+  let _allSummary  = null;   // { total, connCount, failCount }
 
   // ─── Public ────────────────────────────────────────────────────
 
   async function render(container, params = {}) {
     _currentPage = 1;
     _items = [];
+    _mode = 'single';
+    _allSummary = null;
 
     const connections = ConnectionsModule.getActive();
     const connOptions = connections.map(c =>
@@ -27,8 +32,15 @@ const WorkItemsModule = (() => {
       <div class="page-title"><i class="fa-solid fa-list-check"></i> Work Items</div>
       <p class="page-subtitle">Browse and track work items across your projects.</p>
 
-      <!-- Selectors row -->
-      <div class="filter-bar mb-16">
+      <!-- Mode toggle -->
+      <div class="filter-bar mb-8" id="wi-mode-bar">
+        <label style="font-weight:600">View:</label>
+        <button class="btn btn-primary btn-sm active" id="wi-mode-single" data-mode="single">Single Project</button>
+        <button class="btn btn-secondary btn-sm" id="wi-mode-all" data-mode="all">All Connections</button>
+      </div>
+
+      <!-- Selectors row (single mode) -->
+      <div class="filter-bar mb-16" id="wi-single-bar">
         <select id="wi-conn-select" style="min-width:160px">
           <option value="">Select Organization…</option>
           ${connOptions}
@@ -38,6 +50,13 @@ const WorkItemsModule = (() => {
         </select>
         <button class="btn btn-primary btn-sm" id="wi-load-btn" disabled>
           <i class="fa-solid fa-download"></i> Load
+        </button>
+      </div>
+
+      <!-- All connections bar (all mode, hidden by default) -->
+      <div class="filter-bar mb-16" id="wi-all-bar" style="display:none">
+        <button class="btn btn-primary btn-sm" id="wi-load-all-btn">
+          <i class="fa-solid fa-download"></i> Load All
         </button>
       </div>
 
@@ -102,6 +121,33 @@ const WorkItemsModule = (() => {
   // ─── Private ───────────────────────────────────────────────────
 
   function _bindSelectorEvents(container) {
+    // Mode toggle
+    container.querySelector('#wi-mode-single').addEventListener('click', () => {
+      if (_mode === 'single') return;
+      _mode = 'single';
+      container.querySelector('#wi-mode-single').className = 'btn btn-primary btn-sm active';
+      container.querySelector('#wi-mode-all').className = 'btn btn-secondary btn-sm';
+      container.querySelector('#wi-single-bar').style.display = '';
+      container.querySelector('#wi-all-bar').style.display = 'none';
+      container.querySelector('#wi-filters').style.display = 'none';
+      container.querySelector('#wi-content').innerHTML = '';
+      _items = [];
+      _allSummary = null;
+    });
+
+    container.querySelector('#wi-mode-all').addEventListener('click', () => {
+      if (_mode === 'all') return;
+      _mode = 'all';
+      container.querySelector('#wi-mode-all').className = 'btn btn-primary btn-sm active';
+      container.querySelector('#wi-mode-single').className = 'btn btn-secondary btn-sm';
+      container.querySelector('#wi-single-bar').style.display = 'none';
+      container.querySelector('#wi-all-bar').style.display = '';
+      container.querySelector('#wi-filters').style.display = 'none';
+      container.querySelector('#wi-content').innerHTML = '';
+      _items = [];
+      _allSummary = null;
+    });
+
     container.addEventListener('change', async e => {
       if (e.target.id === 'wi-conn-select') {
         const connId = e.target.value;
@@ -117,6 +163,7 @@ const WorkItemsModule = (() => {
 
     container.addEventListener('click', async e => {
       if (e.target.closest('#wi-load-btn')) await _fetchItems(container);
+      if (e.target.closest('#wi-load-all-btn')) await _fetchAllItems(container);
       if (e.target.closest('#wi-apply-filter-btn')) _renderTable(container);
     });
 
@@ -172,6 +219,56 @@ const WorkItemsModule = (() => {
     _renderTable(container);
   }
 
+  async function _fetchAllItems(container) {
+    const activeConns = ConnectionsModule.getActive().filter(c => c.defaultProject);
+
+    if (activeConns.length === 0) {
+      container.querySelector('#wi-content').innerHTML = `
+        <div class="empty-state">
+          <i class="fa-solid fa-plug-circle-xmark"></i>
+          <p>No connections have a default project configured. <a href="#/connections" style="color:var(--color-primary)">Go to Connections</a> to set one.</p>
+        </div>`;
+      return;
+    }
+
+    _currentPage = 1;
+    _context = null;
+
+    const content = container.querySelector('#wi-content');
+    content.innerHTML = '<div class="loading-state"><div class="spinner spinner-lg"></div><p>Loading work items from all connections…</p></div>';
+    container.querySelector('#wi-filters').style.display = 'none';
+
+    const results = await Promise.allSettled(
+      activeConns.map(conn =>
+        AzureApi.getWorkItems(conn.orgUrl, conn.defaultProject, conn.pat, {})
+          .then(res => ({ conn, res }))
+      )
+    );
+
+    let allItems = [];
+    let failCount = 0;
+
+    for (const outcome of results) {
+      if (outcome.status === 'rejected' || outcome.value.res.error) {
+        failCount++;
+        continue;
+      }
+      const { conn, res } = outcome.value;
+      const items = (res.value || []).map(item => ({
+        ...item,
+        _connName: conn.name,
+        _project: conn.defaultProject,
+        _connId: conn.id,
+      }));
+      allItems = allItems.concat(items);
+    }
+
+    _items = allItems;
+    _allSummary = { total: allItems.length, connCount: activeConns.length - failCount, failCount };
+    container.querySelector('#wi-filters').style.display = '';
+    _renderTable(container);
+  }
+
   function _getFilters(container) {
     return {
       type:     container.querySelector('#wi-type-filter')?.value || '',
@@ -183,11 +280,20 @@ const WorkItemsModule = (() => {
   function _renderTable(container) {
     const search    = (container.querySelector('#wi-search')?.value || '').toLowerCase();
     const content   = container.querySelector('#wi-content');
+    const showOrgCol = _mode === 'all';
 
     let filtered = _items;
     if (search) filtered = filtered.filter(w =>
       (w.fields['System.Title'] || '').toLowerCase().includes(search)
     );
+
+    // Apply type/state/priority filters
+    const typeF     = container.querySelector('#wi-type-filter')?.value || '';
+    const stateF    = container.querySelector('#wi-state-filter')?.value || '';
+    const priorityF = container.querySelector('#wi-priority-filter')?.value || '';
+    if (typeF)     filtered = filtered.filter(w => (w.fields['System.WorkItemType'] || '') === typeF);
+    if (stateF)    filtered = filtered.filter(w => (w.fields['System.State'] || '') === stateF);
+    if (priorityF) filtered = filtered.filter(w => String(w.fields['Microsoft.VSTS.Common.Priority'] || '') === priorityF);
 
     const total    = filtered.length;
     const pages    = Math.ceil(total / PAGE_SIZE) || 1;
@@ -204,19 +310,28 @@ const WorkItemsModule = (() => {
       return;
     }
 
+    const summaryBanner = (showOrgCol && _allSummary) ? `
+      <div class="filter-bar mb-8" style="flex-wrap:wrap;gap:8px">
+        <span class="badge badge-success"><i class="fa-solid fa-circle-check"></i> ${_allSummary.total} item${_allSummary.total !== 1 ? 's' : ''} from ${_allSummary.connCount} connection${_allSummary.connCount !== 1 ? 's' : ''}</span>
+        ${_allSummary.failCount ? `<span class="badge badge-warning"><i class="fa-solid fa-triangle-exclamation"></i> ${_allSummary.failCount} connection${_allSummary.failCount !== 1 ? 's' : ''} failed</span>` : ''}
+      </div>` : '';
+
+    const orgCols = showOrgCol ? '<th>Organization</th><th>Project</th>' : '';
+
     content.innerHTML = `
+      ${summaryBanner}
       <p class="text-sm text-muted mb-8">${total} item${total !== 1 ? 's' : ''} found</p>
       <div class="table-wrapper">
         <table>
           <thead>
             <tr>
-              <th>ID</th><th>Title</th><th>Type</th><th>State</th>
+              <th>ID</th>${orgCols}<th>Title</th><th>Type</th><th>State</th>
               <th>Assigned To</th><th>Priority</th>
               <th>Created</th><th>Updated</th>
             </tr>
           </thead>
           <tbody id="wi-tbody">
-            ${pageItems.map(w => _rowHtml(w)).join('')}
+            ${pageItems.map(w => _rowHtml(w, showOrgCol)).join('')}
           </tbody>
         </table>
       </div>
@@ -225,7 +340,7 @@ const WorkItemsModule = (() => {
 
     // Row click → open detail modal
     content.querySelectorAll('.wi-row').forEach(row => {
-      row.addEventListener('click', () => _openDetail(row.dataset.id));
+      row.addEventListener('click', () => _openDetail(row.dataset.id, row.dataset.connId));
     });
 
     // Pagination
@@ -237,7 +352,7 @@ const WorkItemsModule = (() => {
     });
   }
 
-  function _rowHtml(w) {
+  function _rowHtml(w, showOrgCol) {
     const f       = w.fields;
     const id      = f['System.Id']   || w.id;
     const title   = f['System.Title']|| '(no title)';
@@ -248,9 +363,17 @@ const WorkItemsModule = (() => {
     const created = f['System.CreatedDate'] ? _fmtDate(f['System.CreatedDate']) : '—';
     const updated = f['System.ChangedDate'] ? _fmtDate(f['System.ChangedDate']) : '—';
 
+    const orgCells = showOrgCol
+      ? `<td class="text-sm">${_esc(w._connName || '')}</td><td class="text-sm">${_esc(w._project || '')}</td>`
+      : '';
+
+    // Store connId for detail lookup in all-connections mode
+    const connIdAttr = w._connId ? ` data-conn-id="${_esc(w._connId)}"` : '';
+
     return `
-      <tr class="wi-row" data-id="${id}" style="cursor:pointer">
+      <tr class="wi-row" data-id="${id}"${connIdAttr} style="cursor:pointer">
         <td><a class="text-sm font-mono" style="color:var(--color-primary)">#${id}</a></td>
+        ${orgCells}
         <td class="cell-title" title="${_esc(title)}">${_esc(title)}</td>
         <td>${_typeBadge(type)}</td>
         <td>${_stateBadge(state)}</td>
@@ -261,9 +384,23 @@ const WorkItemsModule = (() => {
       </tr>`;
   }
 
-  async function _openDetail(id) {
-    if (!_context) return;
-    const { conn } = _context;
+  async function _openDetail(id, connIdOverride) {
+    // In "all" mode, the work item row carries a connId; otherwise fall back to _context
+    let conn;
+    if (connIdOverride) {
+      conn = ConnectionsModule.getById(connIdOverride);
+    }
+    if (!conn && _context) {
+      conn = _context.conn;
+    }
+    if (!conn) {
+      // Fall back: find the item in _items and use its stored _connId
+      const item = _items.find(w => String(w.fields['System.Id'] || w.id) === String(id));
+      if (item && item._connId) {
+        conn = ConnectionsModule.getById(item._connId) || null;
+      }
+    }
+    if (!conn) return;
 
     App.openModal('Work Item #' + id, '<div class="loading-state"><div class="spinner"></div><p>Loading…</p></div>');
 
