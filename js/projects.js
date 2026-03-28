@@ -3,9 +3,12 @@
  *
  * Fetches all projects from active connections and renders them
  * in a card-based grid with search and org filter.
+ *
+ * Feature 8: Pin projects — star button saves to localStorage key ado_pinned_projects
  */
 
 const ProjectsModule = (() => {
+  const PINNED_KEY = 'ado_pinned_projects';
   let _projects = [];   // { project, connectionId, connectionName, orgUrl, pat }
   let _loading  = false;
 
@@ -127,7 +130,19 @@ const ProjectsModule = (() => {
       return;
     }
 
-    grid.innerHTML = filtered.map(p => _cardHtml(p)).join('');
+    // Split into pinned and unpinned
+    const pinned   = filtered.filter(p => _isPinned(p.connectionId, p.project.name));
+    const unpinned = filtered.filter(p => !_isPinned(p.connectionId, p.project.name));
+
+    let html = '';
+    if (pinned.length > 0) {
+      html += `<div class="pinned-section" style="grid-column:1/-1">
+        <div class="section-title" style="color:var(--color-warning)"><i class="fa-solid fa-star"></i> Pinned Projects</div>
+        <div class="grid-3">${pinned.map(p => _cardHtml(p)).join('')}</div>
+      </div>`;
+    }
+    html += unpinned.map(p => _cardHtml(p)).join('');
+    grid.innerHTML = html;
 
     // Bind quick-action buttons
     grid.querySelectorAll('.proj-wi-btn').forEach(btn => {
@@ -147,6 +162,15 @@ const ProjectsModule = (() => {
         });
       });
     });
+
+    // Pin buttons
+    grid.querySelectorAll('.pin-btn').forEach(btn => {
+      btn.addEventListener('click', e => {
+        e.stopPropagation();
+        _togglePin(btn.dataset.connId, btn.dataset.project);
+        _applyFilter(container, selectedOrgId);
+      });
+    });
   }
 
   function _cardHtml(entry) {
@@ -163,6 +187,8 @@ const ProjectsModule = (() => {
       ? _esc(p.description)
       : '<span class="text-muted">No description</span>';
 
+    const pinned = _isPinned(entry.connectionId, p.name);
+
     return `
       <div class="project-card">
         <div class="project-card-header">
@@ -170,7 +196,14 @@ const ProjectsModule = (() => {
             <div class="project-name">${_esc(p.name)}</div>
             <div class="project-org"><i class="fa-brands fa-windows" style="font-size:.7rem"></i> ${_esc(entry.connectionName)}</div>
           </div>
-          ${visibility}
+          <div style="display:flex;align-items:center;gap:6px">
+            ${visibility}
+            <button class="pin-btn ${pinned ? 'pinned' : ''}"
+              data-conn-id="${entry.connectionId}" data-project="${_esc(p.name)}"
+              title="${pinned ? 'Unpin project' : 'Pin project'}">
+              ${pinned ? '★' : '☆'}
+            </button>
+          </div>
         </div>
         <div class="project-desc">${desc}</div>
         <div class="project-meta">
@@ -190,8 +223,28 @@ const ProjectsModule = (() => {
       </div>`;
   }
 
-  function _bindFilters(container) {
-    // Debounce search
+  // ─── Feature 8: Pin helpers ────────────────────────────────────
+
+  function _getPinned() {
+    try { return JSON.parse(localStorage.getItem(PINNED_KEY) || '[]'); } catch { return []; }
+  }
+
+  function _isPinned(connId, projectName) {
+    return _getPinned().includes(`${connId}::${projectName}`);
+  }
+
+  function _togglePin(connId, projectName) {
+    const key = `${connId}::${projectName}`;
+    let pinned = _getPinned();
+    if (pinned.includes(key)) {
+      pinned = pinned.filter(k => k !== key);
+    } else {
+      pinned.push(key);
+    }
+    localStorage.setItem(PINNED_KEY, JSON.stringify(pinned));
+  }
+
+  function _bindFilters(container) {    // Debounce search
     let timer;
     container.addEventListener('input', e => {
       if (e.target.id !== 'proj-search') return;

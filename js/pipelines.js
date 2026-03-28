@@ -3,16 +3,26 @@
  *
  * Fetches build definitions and recent runs from a selected project
  * and renders them in a table with color-coded status badges.
+ *
+ * Features:
+ *  - Collapsible org groups (Feature 2) — All Connections mode
+ *  - Sortable columns (Feature 3)
+ *  - Keyboard navigation (Feature 6)
+ *  - Breadcrumb nav (Feature 7)
  */
 
 const PipelinesModule = (() => {
   let _pipelines   = [];   // merged build definition + last run
   let _context     = null;
+  let _sortCol     = '';
+  let _sortDir     = 'asc';
 
   // ─── Public ────────────────────────────────────────────────────
 
   async function render(container, params = {}) {
     _pipelines = [];
+    _sortCol = '';
+    _sortDir = 'asc';
 
     const connections = ConnectionsModule.getActive();
     const connOptions = connections.map(c =>
@@ -49,6 +59,7 @@ const PipelinesModule = (() => {
         </select>
       </div>
 
+      <div id="pipe-breadcrumb"></div>
       <div id="pipe-content"></div>
     `;
 
@@ -125,6 +136,7 @@ const PipelinesModule = (() => {
     const content = container.querySelector('#pipe-content');
     content.innerHTML = '<div class="loading-state"><div class="spinner spinner-lg"></div><p>Loading pipelines…</p></div>';
     container.querySelector('#pipe-filters').style.display = 'none';
+    container.querySelector('#pipe-breadcrumb').innerHTML = '';
 
     // Fetch build definitions + latest builds in parallel
     const [defsResult, buildsResult] = await Promise.all([
@@ -155,10 +167,54 @@ const PipelinesModule = (() => {
     _pipelines = definitions.map(def => ({
       def,
       lastBuild: lastBuildMap[def.id] || null,
+      _connName: conn.name,
+      _project: project,
+      _connId: connId,
     }));
 
     container.querySelector('#pipe-filters').style.display = '';
+    _renderBreadcrumb(container, conn.name, project);
     _renderPipelineList(container);
+  }
+
+  // ─── Feature 7: Breadcrumb ─────────────────────────────────────
+
+  function _renderBreadcrumb(container, orgName, projectName) {
+    const el = container.querySelector('#pipe-breadcrumb');
+    if (!el) return;
+    el.innerHTML = `<nav class="breadcrumb">
+      <span class="bc-link" id="bc-all-conns">All Connections</span>
+      <span class="bc-sep">›</span>
+      <span class="bc-link" id="bc-org">${_esc(orgName)}</span>
+      <span class="bc-sep">›</span>
+      <span>${_esc(projectName)}</span>
+    </nav>`;
+    el.querySelector('#bc-all-conns').addEventListener('click', () => App.navigate('connections'));
+    el.querySelector('#bc-org').addEventListener('click', () => App.navigate('projects'));
+  }
+
+  // ─── Feature 3: Sort helpers ────────────────────────────────────
+
+  function _sortPipelines(items) {
+    if (!_sortCol) return items;
+    const dir = _sortDir === 'asc' ? 1 : -1;
+    return [...items].sort((a, b) => {
+      let va = '', vb = '';
+      if (_sortCol === 'name')   { va = a.def.name || ''; vb = b.def.name || ''; }
+      if (_sortCol === 'status') { va = _buildStatus(a.lastBuild).label; vb = _buildStatus(b.lastBuild).label; }
+      if (_sortCol === 'branch') { va = a.lastBuild?.sourceBranch || ''; vb = b.lastBuild?.sourceBranch || ''; }
+      if (_sortCol === 'triggered') { va = a.lastBuild?.requestedFor?.displayName || ''; vb = b.lastBuild?.requestedFor?.displayName || ''; }
+      if (_sortCol === 'lastrun') {
+        va = a.lastBuild?.finishTime || a.lastBuild?.startTime || '';
+        vb = b.lastBuild?.finishTime || b.lastBuild?.startTime || '';
+      }
+      return dir * va.toString().localeCompare(vb.toString());
+    });
+  }
+
+  function _thSortClass(col) {
+    if (_sortCol !== col) return 'sortable';
+    return `sortable sort-${_sortDir}`;
   }
 
   function _renderPipelineList(container) {
@@ -177,6 +233,9 @@ const PipelinesModule = (() => {
       return s.key === statusF;
     });
 
+    // Sort (Feature 3)
+    filtered = _sortPipelines(filtered);
+
     if (filtered.length === 0) {
       content.innerHTML = `
         <div class="empty-state">
@@ -189,11 +248,15 @@ const PipelinesModule = (() => {
     content.innerHTML = `
       <p class="text-sm text-muted mb-8">${filtered.length} pipeline${filtered.length !== 1 ? 's' : ''}</p>
       <div class="table-wrapper">
-        <table>
+        <table tabindex="0" id="pipe-table">
           <thead>
             <tr>
-              <th>Pipeline</th><th>Last Status</th><th>Branch</th>
-              <th>Triggered By</th><th>Duration</th><th>Last Run</th>
+              <th class="${_thSortClass('name')}" data-col="name">Pipeline</th>
+              <th class="${_thSortClass('status')}" data-col="status">Last Status</th>
+              <th class="${_thSortClass('branch')}" data-col="branch">Branch</th>
+              <th class="${_thSortClass('triggered')}" data-col="triggered">Triggered By</th>
+              <th>Duration</th>
+              <th class="${_thSortClass('lastrun')}" data-col="lastrun">Last Run</th>
             </tr>
           </thead>
           <tbody>
@@ -201,6 +264,70 @@ const PipelinesModule = (() => {
           </tbody>
         </table>
       </div>`;
+
+    // Resizable columns (Feature 4 subset for pipelines)
+    _initResizableColumns(content.querySelector('#pipe-table'));
+
+    // Sort click (Feature 3)
+    content.querySelectorAll('th[data-col]').forEach(th => {
+      th.addEventListener('click', () => {
+        const col = th.dataset.col;
+        if (_sortCol === col) {
+          _sortDir = _sortDir === 'asc' ? 'desc' : 'asc';
+        } else {
+          _sortCol = col;
+          _sortDir = 'asc';
+        }
+        _renderPipelineList(container);
+      });
+    });
+
+    // Keyboard navigation (Feature 6)
+    const table = content.querySelector('#pipe-table');
+    if (table) {
+      table.addEventListener('keydown', e => {
+        const rows = Array.from(table.querySelectorAll('tbody tr'));
+        const focused = table.querySelector('tr.row-focused');
+        let idx = focused ? rows.indexOf(focused) : -1;
+
+        if (e.key === 'ArrowDown') {
+          e.preventDefault();
+          idx = Math.min(idx + 1, rows.length - 1);
+          rows.forEach(r => r.classList.remove('row-focused'));
+          if (rows[idx]) rows[idx].classList.add('row-focused');
+        } else if (e.key === 'ArrowUp') {
+          e.preventDefault();
+          idx = Math.max(idx - 1, 0);
+          rows.forEach(r => r.classList.remove('row-focused'));
+          if (rows[idx]) rows[idx].classList.add('row-focused');
+        } else if (e.key === 'Escape') {
+          App.closeModal();
+        }
+      });
+    }
+  }
+
+  // ─── Feature 4: Resizable columns (reuse same impl) ────────────
+
+  function _initResizableColumns(table) {
+    if (!table) return;
+    table.querySelectorAll('thead th').forEach(th => {
+      if (th.querySelector('.col-resize-handle')) return;
+      const handle = document.createElement('span');
+      handle.className = 'col-resize-handle';
+      th.appendChild(handle);
+
+      let startX, startW;
+      handle.addEventListener('mousedown', e => {
+        e.stopPropagation();
+        startX = e.pageX;
+        startW = th.offsetWidth;
+        const onMove = mv => { th.style.width = (startW + mv.pageX - startX) + 'px'; };
+        const onUp = () => { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); };
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp);
+      });
+    });
   }
 
   function _pipelineRow(entry) {

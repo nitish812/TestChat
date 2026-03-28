@@ -143,6 +143,80 @@ const AzureApi = (() => {
     return _fetch(_url(orgUrl, `_apis/wit/workitems/${id}`, { $expand: 'all' }), pat);
   }
 
+  /**
+   * Feature 9/11 — Update a single field on a work item (state).
+   * PATCH with json-patch+json content type.
+   */
+  async function updateWorkItemState(orgUrl, project, id, newState, pat) {
+    return _fetch(
+      _url(orgUrl, `${encodeURIComponent(project)}/_apis/wit/workitems/${id}`),
+      pat,
+      {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json-patch+json' },
+        body: JSON.stringify([{ op: 'add', path: '/fields/System.State', value: newState }]),
+      }
+    );
+  }
+
+  /**
+   * Feature 11 — Update multiple fields on a work item.
+   * fields: { 'System.State': 'Active', 'System.AssignedTo': 'Name' }
+   */
+  async function updateWorkItemFields(orgUrl, project, id, fields, pat) {
+    const patch = Object.entries(fields).map(([k, v]) => ({ op: 'add', path: `/fields/${k}`, value: v }));
+    return _fetch(
+      _url(orgUrl, `${encodeURIComponent(project)}/_apis/wit/workitems/${id}`),
+      pat,
+      {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json-patch+json' },
+        body: JSON.stringify(patch),
+      }
+    );
+  }
+
+  /**
+   * Feature 12 — Get comments for a work item.
+   */
+  async function getWorkItemComments(orgUrl, project, id, pat) {
+    const base = orgUrl.replace(/\/$/, '');
+    const url = `${base}/${encodeURIComponent(project)}/_apis/wit/workitems/${id}/comments?api-version=7.1-preview.3`;
+    return _fetch(url, pat);
+  }
+
+  /**
+   * Feature 12 — Add a comment to a work item.
+   */
+  async function addWorkItemComment(orgUrl, project, id, text, pat) {
+    const base = orgUrl.replace(/\/$/, '');
+    const url = `${base}/${encodeURIComponent(project)}/_apis/wit/workitems/${id}/comments?api-version=7.1-preview.3`;
+    return _fetch(url, pat, {
+      method: 'POST',
+      body: JSON.stringify({ text }),
+    });
+  }
+
+  /**
+   * Feature 13 — Create a new work item.
+   */
+  async function createWorkItem(orgUrl, project, type, titleVal, description, assignedTo, priority, pat) {
+    const patch = [
+      { op: 'add', path: '/fields/System.Title', value: titleVal },
+    ];
+    if (description)  patch.push({ op: 'add', path: '/fields/System.Description', value: description });
+    if (assignedTo)   patch.push({ op: 'add', path: '/fields/System.AssignedTo',   value: assignedTo });
+    if (priority)     patch.push({ op: 'add', path: '/fields/Microsoft.VSTS.Common.Priority', value: parseInt(priority, 10) });
+
+    const base = orgUrl.replace(/\/$/, '');
+    const url = `${base}/${encodeURIComponent(project)}/_apis/wit/workitems/${encodeURIComponent('$' + type)}?api-version=${API_VERSION}`;
+    return _fetch(url, pat, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json-patch+json' },
+      body: JSON.stringify(patch),
+    });
+  }
+
   /** List build definitions (pipelines) for a project. */
   async function getBuildDefinitions(orgUrl, project, pat) {
     return _fetch(_url(orgUrl, `${encodeURIComponent(project)}/_apis/build/definitions`, { $top: 100 }), pat);
@@ -187,6 +261,11 @@ const AzureApi = (() => {
     getProjects,
     getWorkItems,
     getWorkItemDetail,
+    updateWorkItemState,
+    updateWorkItemFields,
+    getWorkItemComments,
+    addWorkItemComment,
+    createWorkItem,
     getBuildDefinitions,
     getBuildRuns,
     getReleaseDefinitions,

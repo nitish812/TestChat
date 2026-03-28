@@ -4,19 +4,69 @@
  * Shows aggregate stats across all active connections:
  * total orgs, total projects, recent builds, health indicators.
  * Uses CSS-only charts (progress bars) — no external chart library.
+ *
+ * Feature 15: Draggable widgets
+ * Feature 16: Date range filter
+ * Feature 17: Export PDF
  */
 
 const DashboardModule = (() => {
+  const WIDGET_ORDER_KEY = 'ado_widget_order';
+
+  // Default widget order
+  const DEFAULT_WIDGETS = ['orgs', 'projects', 'succeeded', 'failed', 'inprogress', 'totalbuilds'];
+
+  // ─── Module state ──────────────────────────────────────────────
+  let _dateRange = { preset: 30, from: null, to: null };  // Feature 16
+
   // ─── Public ────────────────────────────────────────────────────
 
   async function render(container) {
     container.innerHTML = `
-      <div class="page-title"><i class="fa-solid fa-house"></i> Dashboard</div>
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:4px">
+        <div class="page-title" style="margin-bottom:0"><i class="fa-solid fa-house"></i> Dashboard</div>
+        <button class="btn btn-secondary btn-sm" id="dash-export-pdf-btn" title="Export PDF">
+          <i class="fa-solid fa-file-pdf"></i> Export PDF
+        </button>
+      </div>
       <p class="page-subtitle">Centralized overview of all your Azure DevOps organizations.</p>
+
+      <!-- Feature 16: Date range filter -->
+      <div class="date-filter-bar" id="dash-date-filter">
+        <label style="font-weight:600;font-size:.82rem">Range:</label>
+        <button class="btn btn-sm ${_dateRange.preset === 7  ? 'btn-primary' : 'btn-secondary'}" data-preset="7">Last 7 days</button>
+        <button class="btn btn-sm ${_dateRange.preset === 30 ? 'btn-primary' : 'btn-secondary'}" data-preset="30">Last 30 days</button>
+        <button class="btn btn-sm ${_dateRange.preset === 90 ? 'btn-primary' : 'btn-secondary'}" data-preset="90">Last 90 days</button>
+        <span class="text-muted text-sm">or custom:</span>
+        <input type="date" id="dash-date-from" value="${_dateRange.from || ''}" title="From date" />
+        <input type="date" id="dash-date-to"   value="${_dateRange.to   || ''}" title="To date" />
+        <button class="btn btn-primary btn-sm" id="dash-date-apply">Apply</button>
+      </div>
+
       <div id="dash-content">
         <div class="loading-state"><div class="spinner spinner-lg"></div><p>Gathering data…</p></div>
       </div>
     `;
+
+    // Bind date filter events (Feature 16)
+    container.querySelectorAll('[data-preset]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        _dateRange = { preset: parseInt(btn.dataset.preset, 10), from: null, to: null };
+        render(container);
+      });
+    });
+
+    container.querySelector('#dash-date-apply')?.addEventListener('click', () => {
+      const from = container.querySelector('#dash-date-from')?.value;
+      const to   = container.querySelector('#dash-date-to')?.value;
+      if (from || to) {
+        _dateRange = { preset: null, from: from || null, to: to || null };
+        render(container);
+      }
+    });
+
+    // Feature 17: Export PDF
+    container.querySelector('#dash-export-pdf-btn')?.addEventListener('click', () => window.print());
 
     await _loadData(container);
   }
@@ -26,6 +76,17 @@ const DashboardModule = (() => {
   }
 
   // ─── Private ───────────────────────────────────────────────────
+
+  /** Get minDate string (ISO) from current _dateRange state */
+  function _getMinDate() {
+    if (_dateRange.from) return _dateRange.from;
+    if (_dateRange.preset) {
+      const d = new Date();
+      d.setDate(d.getDate() - _dateRange.preset);
+      return d.toISOString().slice(0, 10);
+    }
+    return null;
+  }
 
   async function _loadData(container) {
     const connections = ConnectionsModule.getActive();
@@ -64,7 +125,6 @@ const DashboardModule = (() => {
         else if (r === 'failed' || r === 'partiallysucceeded') buildFailed++;
         else if (s === 'inprogress') buildInProg++;
       });
-      // Add to activity feed
       org.builds.slice(0, 3).forEach(b => {
         recentActivity.push({
           time:  b.finishTime || b.startTime,
@@ -75,40 +135,69 @@ const DashboardModule = (() => {
       });
     });
 
-    // Sort activity feed by time (most recent first)
     recentActivity.sort((a, b) => (b.time || '') > (a.time || '') ? 1 : -1);
-
-    // ── Render ──────────────────────────────────────────────────
 
     const buildsPct = (n) => totalBuilds > 0 ? Math.round(n / totalBuilds * 100) : 0;
 
+    // ── Feature 15: Widget ordering ─────────────────────────────
+    const savedOrder = _loadWidgetOrder();
+
+    // Build stat widgets map
+    const statWidgets = {
+      orgs:       `<div class="stat-card widget" draggable="true" data-widget-id="orgs">
+                     <div style="display:flex;justify-content:space-between;align-items:flex-start">
+                       <div class="stat-value" style="color:var(--color-primary)">${connections.length}</div>
+                       <span class="widget-drag-handle" title="Drag to reorder">⠿</span>
+                     </div>
+                     <div class="stat-label"><i class="fa-solid fa-plug"></i> Connected Orgs</div>
+                   </div>`,
+      projects:   `<div class="stat-card widget" draggable="true" data-widget-id="projects">
+                     <div style="display:flex;justify-content:space-between;align-items:flex-start">
+                       <div class="stat-value" style="color:var(--color-info)">${totalProjects}</div>
+                       <span class="widget-drag-handle" title="Drag to reorder">⠿</span>
+                     </div>
+                     <div class="stat-label"><i class="fa-solid fa-folder-open"></i> Total Projects</div>
+                   </div>`,
+      succeeded:  `<div class="stat-card widget" draggable="true" data-widget-id="succeeded">
+                     <div style="display:flex;justify-content:space-between;align-items:flex-start">
+                       <div class="stat-value" style="color:var(--color-success)">${buildSucceeded}</div>
+                       <span class="widget-drag-handle" title="Drag to reorder">⠿</span>
+                     </div>
+                     <div class="stat-label"><i class="fa-solid fa-circle-check"></i> Builds Succeeded</div>
+                   </div>`,
+      failed:     `<div class="stat-card widget" draggable="true" data-widget-id="failed">
+                     <div style="display:flex;justify-content:space-between;align-items:flex-start">
+                       <div class="stat-value" style="color:var(--color-danger)">${buildFailed}</div>
+                       <span class="widget-drag-handle" title="Drag to reorder">⠿</span>
+                     </div>
+                     <div class="stat-label"><i class="fa-solid fa-circle-xmark"></i> Builds Failed</div>
+                   </div>`,
+      inprogress: `<div class="stat-card widget" draggable="true" data-widget-id="inprogress">
+                     <div style="display:flex;justify-content:space-between;align-items:flex-start">
+                       <div class="stat-value" style="color:var(--color-warning)">${buildInProg}</div>
+                       <span class="widget-drag-handle" title="Drag to reorder">⠿</span>
+                     </div>
+                     <div class="stat-label"><i class="fa-solid fa-spinner fa-spin"></i> In Progress</div>
+                   </div>`,
+      totalbuilds:`<div class="stat-card widget" draggable="true" data-widget-id="totalbuilds">
+                     <div style="display:flex;justify-content:space-between;align-items:flex-start">
+                       <div class="stat-value" style="color:var(--text-secondary)">${totalBuilds}</div>
+                       <span class="widget-drag-handle" title="Drag to reorder">⠿</span>
+                     </div>
+                     <div class="stat-label"><i class="fa-solid fa-rocket"></i> Total Build Runs</div>
+                   </div>`,
+    };
+
+    // Sort by saved order
+    const orderedStatWidgets = savedOrder
+      .filter(id => statWidgets[id])
+      .map(id => statWidgets[id])
+      .join('');
+
     content.innerHTML = `
-      <!-- Stats Row -->
-      <div class="stats-grid">
-        <div class="stat-card">
-          <div class="stat-value" style="color:var(--color-primary)">${connections.length}</div>
-          <div class="stat-label"><i class="fa-solid fa-plug"></i> Connected Orgs</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-value" style="color:var(--color-info)">${totalProjects}</div>
-          <div class="stat-label"><i class="fa-solid fa-folder-open"></i> Total Projects</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-value" style="color:var(--color-success)">${buildSucceeded}</div>
-          <div class="stat-label"><i class="fa-solid fa-circle-check"></i> Builds Succeeded</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-value" style="color:var(--color-danger)">${buildFailed}</div>
-          <div class="stat-label"><i class="fa-solid fa-circle-xmark"></i> Builds Failed</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-value" style="color:var(--color-warning)">${buildInProg}</div>
-          <div class="stat-label"><i class="fa-solid fa-spinner fa-spin"></i> In Progress</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-value" style="color:var(--text-secondary)">${totalBuilds}</div>
-          <div class="stat-label"><i class="fa-solid fa-rocket"></i> Total Build Runs</div>
-        </div>
+      <!-- Stats Row (Feature 15: widgets) -->
+      <div class="stats-grid" id="dash-widgets-grid">
+        ${orderedStatWidgets}
       </div>
 
       <!-- Build health bar -->
@@ -177,12 +266,77 @@ const DashboardModule = (() => {
       });
       obs.observe(dashCols.parentElement);
     }
+
+    // Feature 15: Enable drag-and-drop reordering of widgets
+    _initWidgetDrag(content.querySelector('#dash-widgets-grid'));
+  }
+
+  // ─── Feature 15: Draggable widgets ────────────────────────────
+
+  function _loadWidgetOrder() {
+    try {
+      const saved = JSON.parse(localStorage.getItem(WIDGET_ORDER_KEY) || 'null');
+      if (Array.isArray(saved) && saved.length) return saved;
+    } catch {}
+    return [...DEFAULT_WIDGETS];
+  }
+
+  function _saveWidgetOrder(order) {
+    localStorage.setItem(WIDGET_ORDER_KEY, JSON.stringify(order));
+  }
+
+  function _initWidgetDrag(grid) {
+    if (!grid) return;
+    let dragSrc = null;
+
+    grid.querySelectorAll('.widget[draggable=true]').forEach(widget => {
+      widget.addEventListener('dragstart', e => {
+        dragSrc = widget;
+        widget.classList.add('dragging');
+        e.dataTransfer.effectAllowed = 'move';
+      });
+
+      widget.addEventListener('dragend', () => {
+        widget.classList.remove('dragging');
+        grid.querySelectorAll('.widget').forEach(w => w.classList.remove('drag-over'));
+        // Save new order
+        const order = Array.from(grid.querySelectorAll('.widget[data-widget-id]'))
+          .map(w => w.dataset.widgetId);
+        _saveWidgetOrder(order);
+        dragSrc = null;
+      });
+
+      widget.addEventListener('dragover', e => {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+        if (dragSrc && widget !== dragSrc) {
+          grid.querySelectorAll('.widget').forEach(w => w.classList.remove('drag-over'));
+          widget.classList.add('drag-over');
+        }
+      });
+
+      widget.addEventListener('drop', e => {
+        e.preventDefault();
+        if (!dragSrc || dragSrc === widget) return;
+        // Insert dragSrc before or after widget depending on position
+        const allWidgets = Array.from(grid.querySelectorAll('.widget'));
+        const srcIdx = allWidgets.indexOf(dragSrc);
+        const dstIdx = allWidgets.indexOf(widget);
+        if (srcIdx < dstIdx) {
+          grid.insertBefore(dragSrc, widget.nextSibling);
+        } else {
+          grid.insertBefore(dragSrc, widget);
+        }
+        widget.classList.remove('drag-over');
+      });
+    });
   }
 
   async function _fetchOrgData(conn) {
+    const minDate = _getMinDate();
     const [projResult, buildsResult] = await Promise.all([
       AzureApi.getProjects(conn.orgUrl, conn.pat),
-      _fetchRecentBuildsAllProjects(conn),
+      _fetchRecentBuildsAllProjects(conn, minDate),
     ]);
 
     const projects = projResult.error ? [] : (projResult.value || []);
@@ -199,11 +353,11 @@ const DashboardModule = (() => {
   }
 
   /** Fetch recent builds from first few projects (avoid excessive API calls) */
-  async function _fetchRecentBuildsAllProjects(conn) {
+  async function _fetchRecentBuildsAllProjects(conn, minDate) {
     const projResult = await AzureApi.getProjects(conn.orgUrl, conn.pat);
     if (projResult.error) return [];
 
-    const projects = (projResult.value || []).slice(0, 5); // limit to 5 projects
+    const projects = (projResult.value || []).slice(0, 5);
     const buildLists = await Promise.all(
       projects.map(p => AzureApi.getBuildRuns(conn.orgUrl, p.name, conn.pat))
     );
@@ -211,7 +365,15 @@ const DashboardModule = (() => {
     const builds = [];
     buildLists.forEach((res, i) => {
       if (!res.error) {
-        (res.value || []).slice(0, 5).forEach(b => {
+        let bList = res.value || [];
+        // Feature 16: filter by minDate
+        if (minDate) {
+          bList = bList.filter(b => {
+            const t = b.finishTime || b.startTime;
+            return t && t >= minDate;
+          });
+        }
+        bList.slice(0, 5).forEach(b => {
           b.project = projects[i];
           builds.push(b);
         });

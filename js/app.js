@@ -30,6 +30,22 @@ const App = (() => {
 
     // Listen for hash changes
     window.addEventListener('hashchange', () => _handleHashChange(window.location.hash));
+
+    // Feature 1: Show PAT expiry toasts for active connections
+    _checkPatExpiry();
+  }
+
+  /** Show toast notifications for PATs that are expired or expiring soon. */
+  function _checkPatExpiry() {
+    ConnectionsModule.getActive().forEach(c => {
+      const info = ConnectionsModule.getExpiryInfo(c.patExpiry);
+      if (!info) return;
+      if (info.expired) {
+        showToast(`"${c.name}": PAT has expired. Please update your Personal Access Token.`, 'error');
+      } else if (info.daysLeft <= 7) {
+        showToast(`"${c.name}": PAT expires in ${info.daysLeft} day${info.daysLeft !== 1 ? 's' : ''}. Consider renewing it.`, 'warning');
+      }
+    });
   }
 
   // ─── Routing ───────────────────────────────────────────────────
