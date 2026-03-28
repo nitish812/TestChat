@@ -7,16 +7,41 @@
  */
 
 const DashboardModule = (() => {
+  let _dateFrom = null;
+  let _dateTo   = null;
+
   // ─── Public ────────────────────────────────────────────────────
 
   async function render(container) {
     container.innerHTML = `
       <div class="page-title"><i class="fa-solid fa-house"></i> Dashboard</div>
       <p class="page-subtitle">Centralized overview of all your Azure DevOps organizations.</p>
+      <div class="filter-bar mb-8" style="flex-wrap:wrap">
+        <label class="text-sm" style="align-self:center">From:</label>
+        <input type="date" id="dash-date-from" style="max-width:160px" value="${_dateFrom || ''}" />
+        <label class="text-sm" style="align-self:center">To:</label>
+        <input type="date" id="dash-date-to" style="max-width:160px" value="${_dateTo || ''}" />
+        <button class="btn btn-secondary btn-sm" id="dash-date-apply"><i class="fa-solid fa-filter"></i> Apply</button>
+        <button class="btn btn-secondary btn-sm" id="dash-date-clear">Clear</button>
+        <button class="btn btn-secondary btn-sm" id="dash-export-pdf" style="margin-left:auto"><i class="fa-solid fa-file-pdf"></i> Export PDF</button>
+      </div>
       <div id="dash-content">
         <div class="loading-state"><div class="spinner spinner-lg"></div><p>Gathering data…</p></div>
       </div>
     `;
+
+    container.querySelector('#dash-date-apply')?.addEventListener('click', () => {
+      _dateFrom = container.querySelector('#dash-date-from')?.value || null;
+      _dateTo   = container.querySelector('#dash-date-to')?.value || null;
+      _loadData(container);
+    });
+    container.querySelector('#dash-date-clear')?.addEventListener('click', () => {
+      _dateFrom = null; _dateTo = null;
+      container.querySelector('#dash-date-from').value = '';
+      container.querySelector('#dash-date-to').value = '';
+      _loadData(container);
+    });
+    container.querySelector('#dash-export-pdf')?.addEventListener('click', () => window.print());
 
     await _loadData(container);
   }
@@ -55,9 +80,13 @@ const DashboardModule = (() => {
     const recentActivity = [];
 
     orgResults.forEach(org => {
+      // Apply date range filter to builds if set
+      let builds = org.builds;
+      if (_dateFrom) builds = builds.filter(b => (b.finishTime || b.startTime || '') >= _dateFrom);
+      if (_dateTo)   builds = builds.filter(b => (b.finishTime || b.startTime || '') <= (_dateTo + 'T23:59:59Z'));
       totalProjects += org.projectCount;
-      totalBuilds   += org.builds.length;
-      org.builds.forEach(b => {
+      totalBuilds   += builds.length;
+      builds.forEach(b => {
         const r = (b.result || '').toLowerCase();
         const s = (b.status || '').toLowerCase();
         if (r === 'succeeded') buildSucceeded++;
@@ -65,7 +94,7 @@ const DashboardModule = (() => {
         else if (s === 'inprogress') buildInProg++;
       });
       // Add to activity feed
-      org.builds.slice(0, 3).forEach(b => {
+      builds.slice(0, 3).forEach(b => {
         recentActivity.push({
           time:  b.finishTime || b.startTime,
           org:   org.name,

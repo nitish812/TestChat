@@ -8,6 +8,7 @@
 const ProjectsModule = (() => {
   let _projects = [];   // { project, connectionId, connectionName, orgUrl, pat }
   let _loading  = false;
+  const PINNED_KEY = 'ado_pinned_projects';
 
   // ─── Public ────────────────────────────────────────────────────
 
@@ -104,6 +105,16 @@ const ProjectsModule = (() => {
     });
   }
 
+  function _getPinned() {
+    try { return new Set(JSON.parse(localStorage.getItem(PINNED_KEY) || '[]')); } catch { return new Set(); }
+  }
+  function _togglePin(key) {
+    const pinned = _getPinned();
+    if (pinned.has(key)) pinned.delete(key); else pinned.add(key);
+    localStorage.setItem(PINNED_KEY, JSON.stringify([...pinned]));
+  }
+  function _pinKey(entry) { return `${entry.connectionId}::${entry.project.name}`; }
+
   function _applyFilter(container, selectedOrgId) {
     const grid   = container.querySelector('#proj-grid');
     const search = (container.querySelector('#proj-search')?.value || '').toLowerCase();
@@ -127,7 +138,23 @@ const ProjectsModule = (() => {
       return;
     }
 
-    grid.innerHTML = filtered.map(p => _cardHtml(p)).join('');
+    const pinned = _getPinned();
+    // Sort pinned projects first
+    filtered.sort((a, b) => {
+      const pa = pinned.has(_pinKey(a)) ? 0 : 1;
+      const pb = pinned.has(_pinKey(b)) ? 0 : 1;
+      return pa - pb;
+    });
+
+    grid.innerHTML = filtered.map(p => _cardHtml(p, pinned)).join('');
+
+    // Bind pin buttons
+    grid.querySelectorAll('.proj-pin-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        _togglePin(btn.dataset.pinKey);
+        _applyFilter(container, selectedOrgId);
+      });
+    });
 
     // Bind quick-action buttons
     grid.querySelectorAll('.proj-wi-btn').forEach(btn => {
@@ -149,8 +176,9 @@ const ProjectsModule = (() => {
     });
   }
 
-  function _cardHtml(entry) {
+  function _cardHtml(entry, pinned) {
     const p = entry.project;
+    const isPinned = pinned && pinned.has(_pinKey(entry));
     const visibility = p.visibility === 'public'
       ? '<span class="badge badge-success">Public</span>'
       : '<span class="badge badge-secondary">Private</span>';
@@ -164,13 +192,18 @@ const ProjectsModule = (() => {
       : '<span class="text-muted">No description</span>';
 
     return `
-      <div class="project-card">
+      <div class="project-card${isPinned ? ' project-card-pinned' : ''}">
         <div class="project-card-header">
           <div>
             <div class="project-name">${_esc(p.name)}</div>
             <div class="project-org"><i class="fa-brands fa-windows" style="font-size:.7rem"></i> ${_esc(entry.connectionName)}</div>
           </div>
-          ${visibility}
+          <div style="display:flex;gap:6px;align-items:center">
+            ${visibility}
+            <button class="btn-icon proj-pin-btn" data-pin-key="${_esc(_pinKey(entry))}" title="${isPinned ? 'Unpin' : 'Pin'}" style="color:${isPinned ? 'var(--color-warning)' : 'var(--text-muted)'}">
+              <i class="fa-solid fa-thumbtack"></i>
+            </button>
+          </div>
         </div>
         <div class="project-desc">${desc}</div>
         <div class="project-meta">

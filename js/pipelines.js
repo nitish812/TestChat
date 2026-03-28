@@ -8,6 +8,8 @@
 const PipelinesModule = (() => {
   let _pipelines   = [];   // merged build definition + last run
   let _context     = null;
+  let _sortCol     = null;
+  let _sortDir     = 'asc';
 
   // ─── Public ────────────────────────────────────────────────────
 
@@ -186,14 +188,31 @@ const PipelinesModule = (() => {
       return;
     }
 
+    // Apply sort
+    if (_sortCol) {
+      filtered = filtered.slice().sort((a, b) => {
+        let va = _pipeSortVal(a, _sortCol);
+        let vb = _pipeSortVal(b, _sortCol);
+        if (va < vb) return _sortDir === 'asc' ? -1 : 1;
+        if (va > vb) return _sortDir === 'asc' ? 1 : -1;
+        return 0;
+      });
+    }
+
+    const _th = (key, label) => {
+      const active = _sortCol === key;
+      const icon = active ? (_sortDir === 'asc' ? ' ▲' : ' ▼') : '';
+      return `<th class="sortable-col${active ? ' sort-active' : ''}" data-sort="${key}" style="cursor:pointer;user-select:none">${label}${icon}</th>`;
+    };
+
     content.innerHTML = `
       <p class="text-sm text-muted mb-8">${filtered.length} pipeline${filtered.length !== 1 ? 's' : ''}</p>
       <div class="table-wrapper">
         <table>
           <thead>
             <tr>
-              <th>Pipeline</th><th>Last Status</th><th>Branch</th>
-              <th>Triggered By</th><th>Duration</th><th>Last Run</th>
+              ${_th('name','Pipeline')}${_th('status','Last Status')}${_th('branch','Branch')}
+              ${_th('triggeredBy','Triggered By')}${_th('duration','Duration')}${_th('lastRun','Last Run')}
             </tr>
           </thead>
           <tbody>
@@ -201,6 +220,21 @@ const PipelinesModule = (() => {
           </tbody>
         </table>
       </div>`;
+
+    // Sort header click
+    content.querySelectorAll('.sortable-col').forEach(th => {
+      th.addEventListener('click', () => {
+        const col = th.dataset.sort;
+        if (_sortCol === col) { _sortDir = _sortDir === 'asc' ? 'desc' : 'asc'; }
+        else { _sortCol = col; _sortDir = 'asc'; }
+        _renderPipelineList(container);
+      });
+    });
+
+    // Keyboard nav on rows
+    content.querySelectorAll('tbody tr').forEach(row => {
+      row.setAttribute('tabindex', '0');
+    });
   }
 
   function _pipelineRow(entry) {
@@ -234,6 +268,20 @@ const PipelinesModule = (() => {
   }
 
   // ─── Status helpers ────────────────────────────────────────────
+
+  function _pipeSortVal(entry, col) {
+    const def = entry.def;
+    const build = entry.lastBuild;
+    switch (col) {
+      case 'name':       return (def.name || '').toLowerCase();
+      case 'status':     return _buildStatus(build).label.toLowerCase();
+      case 'branch':     return (build?.sourceBranch || '').replace('refs/heads/', '').toLowerCase();
+      case 'triggeredBy':return (build?.requestedFor?.displayName || build?.requestedBy?.displayName || '').toLowerCase();
+      case 'duration':   return build ? (new Date(build.finishTime || Date.now()) - new Date(build.startTime || Date.now())) : 0;
+      case 'lastRun':    return build?.finishTime || build?.startTime || '';
+      default:           return '';
+    }
+  }
 
   function _buildStatus(build) {
     if (!build) return { key: 'notStarted', label: 'No runs', cls: 'status-notstarted', icon: '⚪' };

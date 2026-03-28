@@ -14,6 +14,8 @@ const WorkItemsModule = (() => {
   let _context     = null;   // { connId, project }
   let _mode        = 'single'; // 'single' | 'all'
   let _allSummary  = null;   // { total, connCount, failCount }
+  let _sortCol = null;
+  let _sortDir = 'asc';
 
   // ─── Public ────────────────────────────────────────────────────
 
@@ -91,6 +93,12 @@ const WorkItemsModule = (() => {
         <button class="btn btn-secondary btn-sm" id="wi-apply-filter-btn">
           <i class="fa-solid fa-filter"></i> Apply
         </button>
+        <button class="btn btn-secondary btn-sm" id="wi-export-btn">
+          <i class="fa-solid fa-file-csv"></i> Export CSV
+        </button>
+        <button class="btn btn-primary btn-sm" id="wi-new-btn" style="display:none">
+          <i class="fa-solid fa-plus"></i> New Work Item
+        </button>
       </div>
 
       <div id="wi-content"></div>
@@ -165,6 +173,10 @@ const WorkItemsModule = (() => {
       if (e.target.closest('#wi-load-btn')) await _fetchItems(container);
       if (e.target.closest('#wi-load-all-btn')) await _fetchAllItems(container);
       if (e.target.closest('#wi-apply-filter-btn')) _renderTable(container);
+      if (e.target.closest('#wi-export-btn')) _exportCsv(_getCurrentFiltered(container));
+      if (e.target.closest('#wi-new-btn')) _openCreateModal(container);
+      if (e.target.closest('#wi-bulk-apply-btn')) _bulkApply(container);
+      if (e.target.closest('#wi-bulk-export-btn')) _exportCsv(_getCheckedItems(container));
     });
 
     container.addEventListener('keydown', e => {
@@ -216,6 +228,7 @@ const WorkItemsModule = (() => {
 
     _items = result.value || [];
     container.querySelector('#wi-filters').style.display = '';
+    container.querySelector('#wi-new-btn').style.display = '';
     _renderTable(container);
   }
 
@@ -295,6 +308,17 @@ const WorkItemsModule = (() => {
     if (stateF)    filtered = filtered.filter(w => (w.fields['System.State'] || '') === stateF);
     if (priorityF) filtered = filtered.filter(w => String(w.fields['Microsoft.VSTS.Common.Priority'] || '') === priorityF);
 
+    // Apply sorting
+    if (_sortCol) {
+      filtered = filtered.slice().sort((a, b) => {
+        let va = _sortVal(a, _sortCol);
+        let vb = _sortVal(b, _sortCol);
+        if (va < vb) return _sortDir === 'asc' ? -1 : 1;
+        if (va > vb) return _sortDir === 'asc' ? 1 : -1;
+        return 0;
+      });
+    }
+
     const total    = filtered.length;
     const pages    = Math.ceil(total / PAGE_SIZE) || 1;
     _currentPage   = Math.min(_currentPage, pages);
@@ -316,18 +340,30 @@ const WorkItemsModule = (() => {
         ${_allSummary.failCount ? `<span class="badge badge-warning"><i class="fa-solid fa-triangle-exclamation"></i> ${_allSummary.failCount} connection${_allSummary.failCount !== 1 ? 's' : ''} failed</span>` : ''}
       </div>` : '';
 
-    const orgCols = showOrgCol ? '<th>Organization</th><th>Project</th>' : '';
+    // Column count for group headers colspan
+    // checkbox + id + (org + project if all) + title + type + state + assigned + priority + created + updated + edit
+    const totalCols = showOrgCol ? 12 : 10;
+
+    const _th = (key, label) => {
+      const active = _sortCol === key;
+      const icon = active ? (_sortDir === 'asc' ? ' ▲' : ' ▼') : '';
+      return `<th class="sortable-col${active ? ' sort-active' : ''}" data-sort="${key}" style="cursor:pointer;user-select:none">${label}${icon}<span class="resize-handle" data-resize="${key}"></span></th>`;
+    };
+
+    const orgCols = showOrgCol ? `${_th('org','Organization')}${_th('project','Project')}` : '';
 
     content.innerHTML = `
       ${summaryBanner}
       <p class="text-sm text-muted mb-8">${total} item${total !== 1 ? 's' : ''} found</p>
       <div class="table-wrapper">
-        <table>
+        <table id="wi-table">
           <thead>
             <tr>
-              <th>ID</th>${orgCols}<th>Title</th><th>Type</th><th>State</th>
-              <th>Assigned To</th><th>Priority</th>
-              <th>Created</th><th>Updated</th>
+              <th style="width:32px"><input type="checkbox" id="wi-select-all" title="Select all" /></th>
+              ${_th('id','ID')}${orgCols}${_th('title','Title')}${_th('type','Type')}${_th('state','State')}
+              ${_th('assigned','Assigned To')}${_th('priority','Priority')}
+              ${_th('created','Created')}${_th('updated','Updated')}
+              <th>Edit</th>
             </tr>
           </thead>
           <tbody id="wi-tbody">
@@ -336,11 +372,69 @@ const WorkItemsModule = (() => {
         </table>
       </div>
       ${_paginationHtml(_currentPage, pages)}
+      <div id="wi-bulk-bar" class="bulk-bar" style="display:none">
+        <span id="wi-bulk-count" class="text-sm"></span>
+        <select id="wi-bulk-state">
+          <option value="">Change State…</option>
+          <option value="Active">Active</option>
+          <option value="Resolved">Resolved</option>
+          <option value="Closed">Closed</option>
+          <option value="Done">Done</option>
+        </select>
+        <button class="btn btn-primary btn-sm" id="wi-bulk-apply-btn">Apply</button>
+        <button class="btn btn-secondary btn-sm" id="wi-bulk-export-btn"><i class="fa-solid fa-file-csv"></i> Export Selected</button>
+      </div>
     `;
 
-    // Row click → open detail modal
+    // Sort header click
+    content.querySelectorAll('.sortable-col').forEach(th => {
+      th.addEventListener('click', e => {
+        if (e.target.classList.contains('resize-handle')) return;
+        const col = th.dataset.sort;
+        if (_sortCol === col) {
+          _sortDir = _sortDir === 'asc' ? 'desc' : 'asc';
+        } else {
+          _sortCol = col;
+          _sortDir = 'asc';
+        }
+        _renderTable(container);
+      });
+    });
+
+    // Select-all checkbox
+    const selectAll = content.querySelector('#wi-select-all');
+    if (selectAll) {
+      selectAll.addEventListener('change', () => {
+        content.querySelectorAll('.wi-row-check').forEach(cb => { cb.checked = selectAll.checked; });
+        _updateBulkBar(content);
+      });
+    }
+
+    // Row checkboxes
+    content.querySelectorAll('.wi-row-check').forEach(cb => {
+      cb.addEventListener('change', () => _updateBulkBar(content));
+    });
+
+    // Row click → open detail modal (skip checkbox and edit columns)
     content.querySelectorAll('.wi-row').forEach(row => {
-      row.addEventListener('click', () => _openDetail(row.dataset.id, row.dataset.connId));
+      row.addEventListener('click', e => {
+        if (e.target.closest('.wi-row-check') || e.target.closest('.wi-edit-btn')) return;
+        _openDetail(row.dataset.id, row.dataset.connId);
+      });
+      row.addEventListener('keydown', e => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          _openDetail(row.dataset.id, row.dataset.connId);
+        }
+      });
+    });
+
+    // Edit button
+    content.querySelectorAll('.wi-edit-btn').forEach(btn => {
+      btn.addEventListener('click', e => {
+        e.stopPropagation();
+        _openEditModal(btn.dataset.id, btn.dataset.connId, container);
+      });
     });
 
     // Pagination
@@ -350,6 +444,8 @@ const WorkItemsModule = (() => {
         if (!isNaN(p)) { _currentPage = p; _renderTable(container); }
       });
     });
+
+    _initResizableColumns(content.querySelector('#wi-table'));
   }
 
   function _rowHtml(w, showOrgCol) {
@@ -367,11 +463,11 @@ const WorkItemsModule = (() => {
       ? `<td class="text-sm">${_esc(w._connName || '')}</td><td class="text-sm">${_esc(w._project || '')}</td>`
       : '';
 
-    // Store connId for detail lookup in all-connections mode
     const connIdAttr = w._connId ? ` data-conn-id="${_esc(w._connId)}"` : '';
 
     return `
-      <tr class="wi-row" data-id="${id}"${connIdAttr} style="cursor:pointer">
+      <tr class="wi-row" data-id="${id}"${connIdAttr} tabindex="0" style="cursor:pointer">
+        <td onclick="event.stopPropagation()"><input type="checkbox" class="wi-row-check" data-id="${id}" /></td>
         <td><a class="text-sm font-mono" style="color:var(--color-primary)">#${id}</a></td>
         ${orgCells}
         <td class="cell-title" title="${_esc(title)}">${_esc(title)}</td>
@@ -381,6 +477,7 @@ const WorkItemsModule = (() => {
         <td>${_priorityBadge(priority)}</td>
         <td class="text-muted text-sm">${created}</td>
         <td class="text-muted text-sm">${updated}</td>
+        <td onclick="event.stopPropagation()"><button class="btn-icon wi-edit-btn" data-id="${id}" data-conn-id="${_esc(w._connId || '')}" title="Edit"><i class="fa-solid fa-pen"></i></button></td>
       </tr>`;
   }
 
@@ -411,7 +508,7 @@ const WorkItemsModule = (() => {
     }
 
     const f = result.fields;
-    App.updateModalBody(`
+    const detailHtml = `
       <div class="detail-row"><span class="detail-label">ID</span><span class="detail-value font-mono">#${result.id}</span></div>
       <div class="detail-row"><span class="detail-label">Title</span><span class="detail-value">${_esc(f['System.Title'] || '')}</span></div>
       <div class="detail-row"><span class="detail-label">Type</span><span class="detail-value">${_typeBadge(f['System.WorkItemType'] || '')}</span></div>
@@ -422,6 +519,7 @@ const WorkItemsModule = (() => {
       <div class="detail-row"><span class="detail-label">Iteration</span><span class="detail-value">${_esc(f['System.IterationPath'] || '—')}</span></div>
       <div class="detail-row"><span class="detail-label">Created</span><span class="detail-value">${_esc(f['System.CreatedDate'] ? new Date(f['System.CreatedDate']).toLocaleString() : '—')}</span></div>
       <div class="detail-row"><span class="detail-label">Updated</span><span class="detail-value">${_esc(f['System.ChangedDate'] ? new Date(f['System.ChangedDate']).toLocaleString() : '—')}</span></div>
+      ${result._links?.html?.href ? `<div class="detail-row"><span class="detail-label">Link</span><span class="detail-value"><a href="${_esc(result._links.html.href)}" target="_blank" rel="noopener">Open in Azure DevOps <i class="fa-solid fa-arrow-up-right-from-square"></i></a></span></div>` : ''}
       ${f['System.Description'] ? `
       <div class="detail-row" style="flex-direction:column;gap:6px">
         <span class="detail-label">Description</span>
@@ -429,7 +527,300 @@ const WorkItemsModule = (() => {
           ${f['System.Description']}
         </div>
       </div>` : ''}
+      <div id="wi-comments-section" style="margin-top:12px">
+        <div class="section-title" style="font-size:.82rem;margin:8px 0 4px">Comments</div>
+        <div id="wi-comments-list"><div class="spinner" style="width:14px;height:14px;border-width:2px;vertical-align:middle;display:inline-block"></div> Loading comments…</div>
+        <div style="margin-top:8px;display:flex;gap:8px;align-items:flex-start;flex-direction:column">
+          <textarea id="wi-new-comment" rows="2" style="width:100%;resize:vertical;font-size:.82rem;padding:6px;border:1px solid var(--border-color);border-radius:var(--radius-sm);background:var(--bg-input);color:var(--text-primary)" placeholder="Add a comment…"></textarea>
+          <button class="btn btn-primary btn-sm" id="wi-add-comment-btn" data-id="${result.id}" data-conn-org="${_esc(conn.orgUrl)}" data-conn-pat="${_esc(conn.pat)}">Post Comment</button>
+        </div>
+      </div>
+    `;
+    App.updateModalBody(detailHtml);
+
+    // Load comments async
+    AzureApi.getWorkItemComments(conn.orgUrl, result.id, conn.pat).then(cr => {
+      const listEl = document.getElementById('wi-comments-list');
+      if (!listEl) return;
+      if (cr.error || !cr.value || cr.value.length === 0) {
+        listEl.innerHTML = '<span class="text-muted text-sm">No comments yet.</span>';
+        return;
+      }
+      listEl.innerHTML = cr.value.map(c => `
+        <div style="border-bottom:1px solid var(--border-color);padding:6px 0;font-size:.82rem">
+          <strong>${_esc(c.createdBy?.displayName || '—')}</strong>
+          <span class="text-muted text-sm" style="margin-left:8px">${c.createdDate ? new Date(c.createdDate).toLocaleString() : ''}</span>
+          <div style="margin-top:4px">${c.text || ''}</div>
+        </div>`).join('');
+    });
+
+    // Post comment handler
+    setTimeout(() => {
+      const btn = document.getElementById('wi-add-comment-btn');
+      if (!btn) return;
+      btn.addEventListener('click', async () => {
+        const text = document.getElementById('wi-new-comment')?.value?.trim();
+        if (!text) return;
+        btn.disabled = true;
+        const res = await AzureApi.addWorkItemComment(conn.orgUrl, result.id, conn.pat, text);
+        btn.disabled = false;
+        if (res.error) { App.showToast('Failed to post comment: ' + res.message, 'error'); return; }
+        App.showToast('Comment posted.', 'success');
+        document.getElementById('wi-new-comment').value = '';
+        const cr2 = await AzureApi.getWorkItemComments(conn.orgUrl, result.id, conn.pat);
+        const listEl2 = document.getElementById('wi-comments-list');
+        if (listEl2 && !cr2.error && cr2.value?.length) {
+          listEl2.innerHTML = cr2.value.map(c => `
+            <div style="border-bottom:1px solid var(--border-color);padding:6px 0;font-size:.82rem">
+              <strong>${_esc(c.createdBy?.displayName || '—')}</strong>
+              <span class="text-muted text-sm" style="margin-left:8px">${c.createdDate ? new Date(c.createdDate).toLocaleString() : ''}</span>
+              <div style="margin-top:4px">${c.text || ''}</div>
+            </div>`).join('');
+        }
+      });
+    }, 0);
+  }
+
+  function _sortVal(w, col) {
+    const f = w.fields;
+    switch (col) {
+      case 'id':       return f['System.Id'] || 0;
+      case 'title':    return (f['System.Title'] || '').toLowerCase();
+      case 'type':     return (f['System.WorkItemType'] || '').toLowerCase();
+      case 'state':    return (f['System.State'] || '').toLowerCase();
+      case 'assigned': return (f['System.AssignedTo']?.displayName || String(f['System.AssignedTo'] || '')).toLowerCase();
+      case 'priority': return f['Microsoft.VSTS.Common.Priority'] || 99;
+      case 'created':  return f['System.CreatedDate'] || '';
+      case 'updated':  return f['System.ChangedDate'] || '';
+      case 'org':      return (w._connName || '').toLowerCase();
+      case 'project':  return (w._project || '').toLowerCase();
+      default:         return '';
+    }
+  }
+
+  function _updateBulkBar(content) {
+    const checked = content.querySelectorAll('.wi-row-check:checked');
+    const bar = content.querySelector('#wi-bulk-bar');
+    const countEl = content.querySelector('#wi-bulk-count');
+    if (!bar) return;
+    if (checked.length > 0) {
+      bar.style.display = 'flex';
+      if (countEl) countEl.textContent = `${checked.length} item${checked.length !== 1 ? 's' : ''} selected`;
+    } else {
+      bar.style.display = 'none';
+    }
+  }
+
+  function _getCheckedItems(container) {
+    const content = container.querySelector('#wi-content');
+    const checked = content ? Array.from(content.querySelectorAll('.wi-row-check:checked')) : [];
+    const ids = new Set(checked.map(cb => String(cb.dataset.id)));
+    return _items.filter(w => ids.has(String(w.fields['System.Id'] || w.id)));
+  }
+
+  function _getCurrentFiltered(container) {
+    const search    = (container.querySelector('#wi-search')?.value || '').toLowerCase();
+    const typeF     = container.querySelector('#wi-type-filter')?.value || '';
+    const stateF    = container.querySelector('#wi-state-filter')?.value || '';
+    const priorityF = container.querySelector('#wi-priority-filter')?.value || '';
+    let filtered = _items;
+    if (search)    filtered = filtered.filter(w => (w.fields['System.Title'] || '').toLowerCase().includes(search));
+    if (typeF)     filtered = filtered.filter(w => (w.fields['System.WorkItemType'] || '') === typeF);
+    if (stateF)    filtered = filtered.filter(w => (w.fields['System.State'] || '') === stateF);
+    if (priorityF) filtered = filtered.filter(w => String(w.fields['Microsoft.VSTS.Common.Priority'] || '') === priorityF);
+    return filtered;
+  }
+
+  function _exportCsv(items) {
+    if (!items || items.length === 0) { App.showToast('No items to export.', 'info'); return; }
+    const headers = ['ID','Title','Type','State','Assigned To','Priority','Created','Updated','Organization','Project'];
+    const rows = items.map(w => {
+      const f = w.fields;
+      return [
+        f['System.Id'] || w.id,
+        f['System.Title'] || '',
+        f['System.WorkItemType'] || '',
+        f['System.State'] || '',
+        f['System.AssignedTo']?.displayName || f['System.AssignedTo'] || '',
+        f['Microsoft.VSTS.Common.Priority'] || '',
+        f['System.CreatedDate'] ? new Date(f['System.CreatedDate']).toLocaleDateString() : '',
+        f['System.ChangedDate'] ? new Date(f['System.ChangedDate']).toLocaleDateString() : '',
+        w._connName || '',
+        w._project || '',
+      ].map(v => `"${String(v).replace(/"/g,'""')}"`).join(',');
+    });
+    const csv = [headers.join(','), ...rows].join('\n');
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `workitems_${new Date().toISOString().slice(0,10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    App.showToast(`Exported ${items.length} items to CSV.`, 'success');
+  }
+
+  async function _bulkApply(container) {
+    const content = container.querySelector('#wi-content');
+    const checked = content ? Array.from(content.querySelectorAll('.wi-row-check:checked')) : [];
+    const state = content?.querySelector('#wi-bulk-state')?.value;
+    if (!state) { App.showToast('Select a state to apply.', 'warning'); return; }
+    if (checked.length === 0) { App.showToast('No items selected.', 'warning'); return; }
+
+    const btn = content.querySelector('#wi-bulk-apply-btn');
+    if (btn) { btn.disabled = true; btn.textContent = 'Applying…'; }
+
+    let successCount = 0;
+    for (const cb of checked) {
+      const id = cb.dataset.id;
+      const item = _items.find(w => String(w.fields['System.Id'] || w.id) === String(id));
+      const connId = item?._connId || _context?.connId;
+      const conn = connId ? ConnectionsModule.getById(connId) : _context?.conn;
+      if (!conn) continue;
+      const res = await AzureApi.updateWorkItemState(conn.orgUrl, id, conn.pat, state);
+      if (!res.error) {
+        successCount++;
+        if (item) item.fields['System.State'] = state;
+      }
+    }
+
+    if (btn) { btn.disabled = false; btn.textContent = 'Apply'; }
+    App.showToast(`Updated ${successCount} of ${checked.length} items to "${state}".`, successCount > 0 ? 'success' : 'error');
+    _renderTable(container);
+  }
+
+  function _openCreateModal(container) {
+    if (!_context) { App.showToast('Select a project first.', 'warning'); return; }
+    App.openModal('New Work Item', `
+      <div class="form-group">
+        <label>Type</label>
+        <select id="wi-create-type">
+          <option value="Task">Task</option>
+          <option value="Bug">Bug</option>
+          <option value="User Story">User Story</option>
+          <option value="Feature">Feature</option>
+          <option value="Epic">Epic</option>
+          <option value="Issue">Issue</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Title <span style="color:var(--color-danger)">*</span></label>
+        <input type="text" id="wi-create-title" placeholder="Work item title…" />
+      </div>
+      <div class="form-group">
+        <label>Description</label>
+        <textarea id="wi-create-desc" rows="3" style="width:100%;resize:vertical;padding:6px;font-size:.85rem;border:1px solid var(--border-color);border-radius:var(--radius-sm);background:var(--bg-input);color:var(--text-primary)" placeholder="Optional description…"></textarea>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:12px">
+        <button class="btn btn-primary btn-sm" id="wi-create-submit-btn">Create</button>
+        <button class="btn btn-secondary btn-sm" onclick="App.closeModal()">Cancel</button>
+      </div>
+      <div id="wi-create-error" class="form-error hidden" style="margin-top:8px"></div>
     `);
+    setTimeout(() => {
+      const btn = document.getElementById('wi-create-submit-btn');
+      if (!btn) return;
+      btn.addEventListener('click', async () => {
+        const title = document.getElementById('wi-create-title')?.value?.trim();
+        const type  = document.getElementById('wi-create-type')?.value;
+        const desc  = document.getElementById('wi-create-desc')?.value?.trim();
+        const errEl = document.getElementById('wi-create-error');
+        if (!title) { if (errEl) { errEl.textContent = 'Title is required.'; errEl.classList.remove('hidden'); } return; }
+        btn.disabled = true; btn.textContent = 'Creating…';
+        const fields = { '/fields/System.Title': title };
+        if (desc) fields['/fields/System.Description'] = desc;
+        const res = await AzureApi.createWorkItem(_context.conn.orgUrl, _context.project, _context.conn.pat, type, fields);
+        btn.disabled = false; btn.textContent = 'Create';
+        if (res.error) {
+          if (errEl) { errEl.textContent = res.message; errEl.classList.remove('hidden'); }
+          return;
+        }
+        App.closeModal();
+        App.showToast(`Work item #${res.id} created successfully.`, 'success');
+        await _fetchItems(container);
+      });
+    }, 0);
+  }
+
+  function _openEditModal(id, connIdOverride, container) {
+    const item = _items.find(w => String(w.fields['System.Id'] || w.id) === String(id));
+    if (!item) return;
+    const connId = connIdOverride || item._connId || _context?.connId;
+    const conn = connId ? ConnectionsModule.getById(connId) : _context?.conn;
+    if (!conn) return;
+    const f = item.fields;
+    App.openModal(`Edit Work Item #${id}`, `
+      <div class="form-group">
+        <label>Title</label>
+        <input type="text" id="wi-edit-title" value="${_esc(f['System.Title'] || '')}" />
+      </div>
+      <div class="form-group">
+        <label>State</label>
+        <select id="wi-edit-state">
+          ${['New','Active','Resolved','Closed','Done'].map(s => `<option value="${s}"${f['System.State'] === s ? ' selected' : ''}>${s}</option>`).join('')}
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Priority</label>
+        <select id="wi-edit-priority">
+          ${[1,2,3,4].map(p => `<option value="${p}"${f['Microsoft.VSTS.Common.Priority'] == p ? ' selected' : ''}>${p}</option>`).join('')}
+        </select>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:12px">
+        <button class="btn btn-primary btn-sm" id="wi-edit-save-btn">Save</button>
+        <button class="btn btn-secondary btn-sm" onclick="App.closeModal()">Cancel</button>
+      </div>
+      <div id="wi-edit-error" class="form-error hidden" style="margin-top:8px"></div>
+    `);
+    setTimeout(() => {
+      const btn = document.getElementById('wi-edit-save-btn');
+      if (!btn) return;
+      btn.addEventListener('click', async () => {
+        const title    = document.getElementById('wi-edit-title')?.value?.trim();
+        const state    = document.getElementById('wi-edit-state')?.value;
+        const priority = document.getElementById('wi-edit-priority')?.value;
+        const errEl    = document.getElementById('wi-edit-error');
+        if (!title) { if (errEl) { errEl.textContent = 'Title is required.'; errEl.classList.remove('hidden'); } return; }
+        btn.disabled = true; btn.textContent = 'Saving…';
+        const fields = {
+          '/fields/System.Title':    title,
+          '/fields/System.State':    state,
+          '/fields/Microsoft.VSTS.Common.Priority': parseInt(priority, 10),
+        };
+        const res = await AzureApi.updateWorkItemFields(conn.orgUrl, id, conn.pat, fields);
+        btn.disabled = false; btn.textContent = 'Save';
+        if (res.error) {
+          if (errEl) { errEl.textContent = res.message; errEl.classList.remove('hidden'); }
+          return;
+        }
+        // Update local item
+        if (item) {
+          item.fields['System.Title'] = title;
+          item.fields['System.State'] = state;
+          item.fields['Microsoft.VSTS.Common.Priority'] = parseInt(priority, 10);
+        }
+        App.closeModal();
+        App.showToast('Work item updated.', 'success');
+        _renderTable(container);
+      });
+    }, 0);
+  }
+
+  function _initResizableColumns(table) {
+    if (!table) return;
+    table.querySelectorAll('.resize-handle').forEach(handle => {
+      handle.addEventListener('mousedown', e => {
+        e.stopPropagation();
+        const th = handle.closest('th');
+        if (!th) return;
+        const startX = e.pageX;
+        const startW = th.offsetWidth;
+        function onMove(ev) { th.style.width = Math.max(40, startW + ev.pageX - startX) + 'px'; }
+        function onUp() { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); }
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp);
+      });
+    });
   }
 
   function _paginationHtml(current, total) {

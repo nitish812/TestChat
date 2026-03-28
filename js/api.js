@@ -182,6 +182,59 @@ const AzureApi = (() => {
     return out;
   }
 
+  async function updateWorkItemState(orgUrl, id, pat, state) {
+    return _fetch(
+      _url(orgUrl, `_apis/wit/workitems/${id}`),
+      pat,
+      {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json-patch+json' },
+        body: JSON.stringify([{ op: 'add', path: '/fields/System.State', value: state }]),
+      }
+    );
+  }
+
+  async function updateWorkItemFields(orgUrl, id, pat, fields) {
+    const body = Object.entries(fields).map(([path, value]) => ({ op: 'add', path, value }));
+    return _fetch(
+      _url(orgUrl, `_apis/wit/workitems/${id}`),
+      pat,
+      {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json-patch+json' },
+        body: JSON.stringify(body),
+      }
+    );
+  }
+
+  async function getWorkItemComments(orgUrl, id, pat) {
+    return _fetch(
+      _url(orgUrl, `_apis/wit/workitems/${id}/comments`, { 'api-version': '7.1-preview.3' }),
+      pat
+    );
+  }
+
+  async function addWorkItemComment(orgUrl, id, pat, text) {
+    return _fetch(
+      _url(orgUrl, `_apis/wit/workitems/${id}/comments`, { 'api-version': '7.1-preview.3' }),
+      pat,
+      { method: 'POST', body: JSON.stringify({ text }) }
+    );
+  }
+
+  async function createWorkItem(orgUrl, project, pat, type, fields) {
+    const body = Object.entries(fields).map(([path, value]) => ({ op: 'add', path, value }));
+    return _fetch(
+      _url(orgUrl, `${encodeURIComponent(project)}/_apis/wit/workitems/$${encodeURIComponent(type)}`),
+      pat,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json-patch+json' },
+        body: JSON.stringify(body),
+      }
+    );
+  }
+
   return {
     validateConnection,
     getProjects,
@@ -191,5 +244,10 @@ const AzureApi = (() => {
     getBuildRuns,
     getReleaseDefinitions,
     getReleases,
+    updateWorkItemState,
+    updateWorkItemFields,
+    getWorkItemComments,
+    addWorkItemComment,
+    createWorkItem,
   };
 })();

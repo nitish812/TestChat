@@ -23,6 +23,7 @@ const App = (() => {
     _restoreTheme();
     _bindGlobalEvents();
     refreshOrgSelector();
+    _checkPatExpiry();
 
     // Initial navigation
     const hash = window.location.hash || '#/dashboard';
@@ -165,6 +166,20 @@ const App = (() => {
     });
     document.addEventListener('keydown', e => {
       if (e.key === 'Escape') closeModal();
+    });
+  }
+
+  function _checkPatExpiry() {
+    const today = new Date(); today.setHours(0,0,0,0);
+    ConnectionsModule.getAll().forEach(c => {
+      if (!c.patExpiry) return;
+      const exp = new Date(c.patExpiry);
+      const diffDays = Math.ceil((exp - today) / (1000 * 60 * 60 * 24));
+      if (diffDays < 0) {
+        showToast(`Connection "${c.name}": PAT has expired!`, 'error');
+      } else if (diffDays <= 14) {
+        showToast(`Connection "${c.name}": PAT expires in ${diffDays} days.`, 'warning');
+      }
     });
   }
 
