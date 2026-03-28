@@ -390,12 +390,7 @@ body.theme-dark .status-notstarted,
 body.theme-dark .status-unknown   { background: #2a2f3a; color: #8b949e; }
 
 /* ---------- Table ---------- */
-.table-wrapper {
-  overflow-x: auto;
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-md);
-  background: var(--bg-card);
-}
+/* .table-wrapper styles are defined in the improvements section below */
 
 table {
   width: 100%;
@@ -787,3 +782,232 @@ textarea:focus {
 .text-sm    { font-size: .78rem; }
 .font-mono  { font-family: monospace; }
 .truncate   { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ============================================================
+   IMPROVEMENT ADDITIONS
+   ============================================================ */
+
+/* ---------- 5. Sticky headers ---------- */
+.table-wrapper {
+  overflow-x: auto;
+  overflow-y: auto;
+  max-height: 60vh;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-card);
+}
+
+thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--bg-table-alt);
+}
+
+/* ---------- 3. Sortable columns ---------- */
+th.sortable { cursor: pointer; user-select: none; }
+th.sortable:hover { color: var(--color-primary); }
+th.sortable::after { content: ' ⇕'; font-size: .65rem; opacity: .4; }
+th.sorted-asc::after  { content: ' ▲'; opacity: 1; color: var(--color-primary); }
+th.sorted-desc::after { content: ' ▼'; opacity: 1; color: var(--color-primary); }
+
+/* ---------- 4. Resizable columns ---------- */
+th { position: relative; }
+.col-resize-handle {
+  position: absolute;
+  right: 0;
+  top: 0;
+  width: 5px;
+  height: 100%;
+  cursor: col-resize;
+  user-select: none;
+  z-index: 3;
+}
+.col-resize-handle:hover { background: var(--color-primary); opacity: .4; }
+
+/* ---------- 6. Keyboard nav ---------- */
+tr.row-focused td { outline: 2px solid var(--color-primary); outline-offset: -2px; }
+
+/* ---------- 7. Breadcrumb ---------- */
+.breadcrumb {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 12px;
+  font-size: .82rem;
+  color: var(--text-secondary);
+}
+.breadcrumb a { color: var(--color-primary); }
+.breadcrumb a:hover { text-decoration: underline; }
+.breadcrumb-sep { color: var(--text-muted); }
+.breadcrumb-current { color: var(--text-primary); font-weight: 600; }
+
+/* ---------- 8. Pin projects ---------- */
+.pin-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: 1.1rem;
+  padding: 2px 4px;
+  border-radius: var(--radius-sm);
+  transition: color var(--transition);
+}
+.pin-btn.pinned { color: #f59e0b; }
+.pin-btn:hover  { color: #f59e0b; }
+
+.pinned-section-title {
+  font-size: .85rem;
+  font-weight: 700;
+  color: var(--color-warning);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+/* ---------- 9. Bulk actions bar ---------- */
+.bulk-bar {
+  background: var(--color-primary);
+  color: #fff;
+  border-radius: var(--radius-md);
+  padding: 8px 14px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.bulk-bar select,
+.bulk-bar input {
+  background: rgba(255,255,255,.15);
+  color: #fff;
+  border: 1px solid rgba(255,255,255,.3);
+  border-radius: var(--radius-sm);
+  padding: 4px 8px;
+  font-size: .8rem;
+}
+.bulk-bar select option { background: var(--bg-card); color: var(--text-primary); }
+
+/* ---------- 2. Collapsible org groups ---------- */
+.group-header-row td {
+  background: var(--bg-table-alt);
+  font-weight: 600;
+  font-size: .8rem;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 6px 14px;
+  user-select: none;
+}
+.group-header-row:hover td { background: var(--bg-hover); }
+.group-header-row.group-collapsed .group-arrow { display: inline-block; transform: rotate(-90deg); }
+.group-arrow { display: inline-block; transition: transform var(--transition); margin-right: 6px; }
+
+/* ---------- 11. Inline edit ---------- */
+.wi-edit-btn {
+  visibility: hidden;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text-muted);
+  padding: 2px 5px;
+  border-radius: var(--radius-sm);
+  font-size: .8rem;
+  transition: color var(--transition);
+}
+tr:hover .wi-edit-btn { visibility: visible; }
+.wi-edit-btn:hover { color: var(--color-primary); }
+
+/* ---------- 12. Comments ---------- */
+.wi-comments-list { display: flex; flex-direction: column; gap: 10px; margin-top: 6px; }
+.wi-comment {
+  background: var(--bg-table-alt);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  padding: 8px 12px;
+  font-size: .82rem;
+}
+.wi-comment-author { font-weight: 600; margin-bottom: 2px; }
+.wi-comment-text   { line-height: 1.5; }
+
+/* ---------- 15. Draggable widgets ---------- */
+.widget { cursor: grab; }
+.widget.dragging { opacity: .5; }
+.widget.drag-over { border: 2px dashed var(--color-primary); }
+.drag-handle {
+  cursor: grab;
+  color: var(--text-muted);
+  font-size: .9rem;
+  padding: 2px 4px;
+}
+.drag-handle:hover { color: var(--text-primary); }
+
+/* ---------- 16. Dashboard date range filter ---------- */
+.dash-filter-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 16px;
+  padding: 10px 14px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+}
+.dash-filter-preset {
+  padding: 4px 10px;
+  border-radius: 20px;
+  border: 1px solid var(--border-color);
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: .78rem;
+  font-weight: 600;
+  transition: background var(--transition), color var(--transition);
+}
+.dash-filter-preset.active,
+.dash-filter-preset:hover {
+  background: var(--color-primary);
+  color: #fff;
+  border-color: var(--color-primary);
+}
+
+/* ---------- 17. Export PDF / @media print ---------- */
+.print-btn { }
+
+@media print {
+  nav#sidebar,
+  #top-header,
+  .filter-bar,
+  .filter-bar *,
+  .bulk-bar,
+  .dash-filter-bar,
+  .pagination,
+  .btn,
+  .btn-icon,
+  #refresh-btn,
+  #theme-toggle,
+  #sidebar-toggle,
+  .wi-edit-btn,
+  .pin-btn,
+  .drag-handle,
+  .toast-container {
+    display: none !important;
+  }
+
+  body {
+    display: block;
+    background: #fff;
+    color: #000;
+  }
+
+  #main-content {
+    grid-area: unset;
+    padding: 0;
+  }
+
+  .card, .project-card, .stat-card { page-break-inside: avoid; box-shadow: none; border: 1px solid #ccc; }
+  .table-wrapper { max-height: none; overflow: visible; }
+  table { font-size: 10pt; }
+}

@@ -182,11 +182,95 @@ const AzureApi = (() => {
     return out;
   }
 
+  /** Update work item state via PATCH json-patch+json. */
+  async function updateWorkItemState(orgUrl, id, pat, state) {
+    return _fetch(
+      _url(orgUrl, `_apis/wit/workitems/${id}`),
+      pat,
+      {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json-patch+json' },
+        body: JSON.stringify([{ op: 'add', path: '/fields/System.State', value: state }]),
+      }
+    );
+  }
+
+  /** Update arbitrary work item fields via PATCH json-patch+json. */
+  async function updateWorkItemFields(orgUrl, id, pat, fields) {
+    const ops = Object.entries(fields).map(([key, value]) => ({ op: 'add', path: `/fields/${key}`, value }));
+    return _fetch(
+      _url(orgUrl, `_apis/wit/workitems/${id}`),
+      pat,
+      {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json-patch+json' },
+        body: JSON.stringify(ops),
+      }
+    );
+  }
+
+  /** Get comments for a work item (api-version 7.1-preview.3). */
+  async function getWorkItemComments(orgUrl, id, pat) {
+    return _fetch(_url(orgUrl, `_apis/wit/workitems/${id}/comments`, { 'api-version': '7.1-preview.3' }), pat);
+  }
+
+  /** Add a comment to a work item. */
+  async function addWorkItemComment(orgUrl, id, pat, text) {
+    return _fetch(
+      _url(orgUrl, `_apis/wit/workitems/${id}/comments`, { 'api-version': '7.1-preview.3' }),
+      pat,
+      { method: 'POST', body: JSON.stringify({ text }) }
+    );
+  }
+
+  /** Create a new work item of a given type in a project. */
+  async function createWorkItem(orgUrl, project, type, pat, fields) {
+    const ops = Object.entries(fields).map(([key, value]) => ({ op: 'add', path: `/fields/${key}`, value }));
+    return _fetch(
+      _url(orgUrl, `${encodeURIComponent(project)}/_apis/wit/workitems/${encodeURIComponent('$' + type)}`),
+      pat,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json-patch+json' },
+        body: JSON.stringify(ops),
+      }
+    );
+  }
+
+  /** Get a work item with relations expanded. */
+  async function getWorkItemWithRelations(orgUrl, id, pat) {
+    return _fetch(_url(orgUrl, `_apis/wit/workitems/${id}`, { $expand: 'relations' }), pat);
+  }
+
+  /** Batch-fetch work items by IDs (minimal fields). */
+  async function getWorkItemsByIds(orgUrl, ids, pat) {
+    if (!ids || ids.length === 0) return { value: [] };
+    const fields = 'System.Id,System.Title,System.WorkItemType,System.State';
+    const batches = _chunk(ids, 50);
+    const results = [];
+    for (const batch of batches) {
+      const data = await _fetch(
+        _url(orgUrl, '_apis/wit/workitems', { ids: batch.join(','), fields }),
+        pat
+      );
+      if (data.error) return data;
+      results.push(...(data.value || []));
+    }
+    return { value: results };
+  }
+
   return {
     validateConnection,
     getProjects,
     getWorkItems,
     getWorkItemDetail,
+    getWorkItemWithRelations,
+    getWorkItemsByIds,
+    updateWorkItemState,
+    updateWorkItemFields,
+    getWorkItemComments,
+    addWorkItemComment,
+    createWorkItem,
     getBuildDefinitions,
     getBuildRuns,
     getReleaseDefinitions,

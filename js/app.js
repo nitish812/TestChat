@@ -23,6 +23,7 @@ const App = (() => {
     _restoreTheme();
     _bindGlobalEvents();
     refreshOrgSelector();
+    ConnectionsModule.checkExpiryToasts();
 
     // Initial navigation
     const hash = window.location.hash || '#/dashboard';
