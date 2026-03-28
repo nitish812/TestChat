@@ -21,12 +21,35 @@ const App = (() => {
 
   function init() {
     _restoreTheme();
+    _restoreSession();
     _bindGlobalEvents();
     refreshOrgSelector();
 
-    // Initial navigation
-    const hash = window.location.hash || '#/dashboard';
-    _handleHashChange(hash);
+    // Restore org-selector value from session (must happen after refreshOrgSelector
+    // populates the options)
+    const session = SessionManager.load();
+    if (session && session.orgSelectorValue) {
+      const sel = document.getElementById('org-selector');
+      if (sel) sel.value = session.orgSelectorValue;
+    }
+
+    // If the browser kept a hash, use it; otherwise resume from session or default
+    const hash = window.location.hash;
+    if (hash && hash !== '#/' && hash !== '#') {
+      // Restore params for the current route from the saved session
+      if (session && session.params && Object.keys(session.params).length) {
+        const routeFromHash = hash.replace('#/', '').split('?')[0] || 'dashboard';
+        if (routeFromHash === session.route) {
+          _currentParams = session.params;
+        }
+      }
+      _handleHashChange(hash);
+    } else if (session && session.route) {
+      _currentParams = session.params || {};
+      window.location.hash = '#/' + session.route;
+    } else {
+      _handleHashChange('#/dashboard');
+    }
 
     // Listen for hash changes
     window.addEventListener('hashchange', () => _handleHashChange(window.location.hash));
@@ -80,6 +103,9 @@ const App = (() => {
         DashboardModule.render(container);
     }
 
+    // Persist session state before resetting params
+    _saveSession(p);
+
     // Reset per-navigation params after use
     _currentParams = {};
   }
@@ -115,6 +141,7 @@ const App = (() => {
         document.body.classList.remove('sidebar-collapsed');
         document.body.classList.toggle('sidebar-open');
       }
+      _saveSession();
     });
 
     // Close mobile sidebar when clicking main
@@ -156,6 +183,7 @@ const App = (() => {
     document.getElementById('org-selector')?.addEventListener('change', () => {
       const container = document.getElementById('page-container');
       if (_currentRoute === 'projects') ProjectsModule.render(container, _getSelectedOrgId());
+      _saveSession();
     });
 
     // Modal close
@@ -175,6 +203,27 @@ const App = (() => {
       document.body.classList.add('theme-dark');
       const icon = document.querySelector('#theme-toggle i');
       if (icon) icon.className = 'fa-solid fa-sun';
+    }
+  }
+
+  // ─── Session persistence ──────────────────────────────────────
+
+  /** Persist current navigation state so the session can be resumed. */
+  function _saveSession(params) {
+    SessionManager.save({
+      route:            _currentRoute,
+      params:           params || {},
+      orgSelectorValue: document.getElementById('org-selector')?.value || '',
+      sidebarCollapsed: document.body.classList.contains('sidebar-collapsed'),
+    });
+  }
+
+  /** Restore sidebar collapsed state from the saved session. */
+  function _restoreSession() {
+    const session = SessionManager.load();
+    if (!session) return;
+    if (session.sidebarCollapsed) {
+      document.body.classList.add('sidebar-collapsed');
     }
   }
 
