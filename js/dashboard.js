@@ -4,20 +4,51 @@
  * Shows aggregate stats across all active connections:
  * total orgs, total projects, recent builds, health indicators.
  * Uses CSS-only charts (progress bars) — no external chart library.
+ *
+ * Features:
+ *  - Draggable widgets with HTML5 DnD (order saved to ado_widget_order)
+ *  - Date range filter (7/30/90 days + custom)
+ *  - Export dashboard as PDF (window.print)
  */
 
 const DashboardModule = (() => {
+  const WIDGET_ORDER_KEY = 'ado_widget_order';
+  let _dateRangeDays = null;   // null = all time, number = days
+  let _dateFrom = null;
+  let _dateTo   = null;
+
   // ─── Public ────────────────────────────────────────────────────
 
   async function render(container) {
     container.innerHTML = `
-      <div class="page-title"><i class="fa-solid fa-house"></i> Dashboard</div>
-      <p class="page-subtitle">Centralized overview of all your Azure DevOps organizations.</p>
+      <div class="page-title no-print">
+        <i class="fa-solid fa-house"></i> Dashboard
+        <button class="btn btn-secondary btn-sm" id="dash-print-btn" style="margin-left:auto" title="Export as PDF">
+          <i class="fa-solid fa-print"></i> Export PDF
+        </button>
+      </div>
+      <p class="page-subtitle no-print">Centralized overview of all your Azure DevOps organizations.</p>
+
+      <!-- Date range filter -->
+      <div class="filter-bar mb-16 no-print" id="dash-date-bar">
+        <label style="font-weight:600">Range:</label>
+        <button class="btn btn-secondary btn-sm dash-range-btn ${_dateRangeDays === null ? 'active' : ''}" data-days="">All Time</button>
+        <button class="btn btn-secondary btn-sm dash-range-btn ${_dateRangeDays === 7  ? 'active' : ''}" data-days="7">Last 7 days</button>
+        <button class="btn btn-secondary btn-sm dash-range-btn ${_dateRangeDays === 30 ? 'active' : ''}" data-days="30">Last 30 days</button>
+        <button class="btn btn-secondary btn-sm dash-range-btn ${_dateRangeDays === 90 ? 'active' : ''}" data-days="90">Last 90 days</button>
+        <span style="font-weight:600">Custom:</span>
+        <input type="date" id="dash-from" value="${_dateFrom || ''}" style="width:auto" title="From date" />
+        <input type="date" id="dash-to"   value="${_dateTo   || ''}" style="width:auto" title="To date" />
+        <button class="btn btn-primary btn-sm" id="dash-custom-btn"><i class="fa-solid fa-filter"></i> Apply</button>
+      </div>
+
       <div id="dash-content">
         <div class="loading-state"><div class="spinner spinner-lg"></div><p>Gathering data…</p></div>
       </div>
     `;
 
+    _bindDateBar(container);
+    container.querySelector('#dash-print-btn')?.addEventListener('click', () => window.print());
     await _loadData(container);
   }
 
@@ -26,6 +57,45 @@ const DashboardModule = (() => {
   }
 
   // ─── Private ───────────────────────────────────────────────────
+
+  function _bindDateBar(container) {
+    container.querySelectorAll('.dash-range-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const days = btn.dataset.days === '' ? null : parseInt(btn.dataset.days, 10);
+        _dateRangeDays = days;
+        _dateFrom = null;
+        _dateTo   = null;
+        container.querySelector('#dash-from').value = '';
+        container.querySelector('#dash-to').value   = '';
+        container.querySelectorAll('.dash-range-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        _loadData(container);
+      });
+    });
+
+    container.querySelector('#dash-custom-btn')?.addEventListener('click', () => {
+      _dateRangeDays = null;
+      _dateFrom = container.querySelector('#dash-from')?.value || null;
+      _dateTo   = container.querySelector('#dash-to')?.value   || null;
+      container.querySelectorAll('.dash-range-btn').forEach(b => b.classList.remove('active'));
+      _loadData(container);
+    });
+  }
+
+  function _buildDateFilter() {
+    if (_dateRangeDays !== null) {
+      const from = new Date();
+      from.setDate(from.getDate() - _dateRangeDays);
+      return { minTime: from.toISOString() };
+    }
+    if (_dateFrom || _dateTo) {
+      const filter = {};
+      if (_dateFrom) filter.minTime = new Date(_dateFrom).toISOString();
+      if (_dateTo)   filter.maxTime = new Date(_dateTo + 'T23:59:59').toISOString();
+      return filter;
+    }
+    return {};
+  }
 
   async function _loadData(container) {
     const connections = ConnectionsModule.getActive();
@@ -43,8 +113,12 @@ const DashboardModule = (() => {
       return;
     }
 
+    content.innerHTML = '<div class="loading-state"><div class="spinner spinner-lg"></div><p>Gathering data…</p></div>';
+
     // Fetch all org data in parallel
     const orgResults = await Promise.all(connections.map(conn => _fetchOrgData(conn)));
+
+    const dateFilter = _buildDateFilter();
 
     // Aggregate totals
     let totalProjects = 0;
@@ -56,16 +130,17 @@ const DashboardModule = (() => {
 
     orgResults.forEach(org => {
       totalProjects += org.projectCount;
-      totalBuilds   += org.builds.length;
-      org.builds.forEach(b => {
+      // Apply date filter to builds
+      const builds = _filterBuilds(org.builds, dateFilter);
+      totalBuilds   += builds.length;
+      builds.forEach(b => {
         const r = (b.result || '').toLowerCase();
         const s = (b.status || '').toLowerCase();
         if (r === 'succeeded') buildSucceeded++;
         else if (r === 'failed' || r === 'partiallysucceeded') buildFailed++;
         else if (s === 'inprogress') buildInProg++;
       });
-      // Add to activity feed
-      org.builds.slice(0, 3).forEach(b => {
+      builds.slice(0, 3).forEach(b => {
         recentActivity.push({
           time:  b.finishTime || b.startTime,
           org:   org.name,
@@ -75,108 +150,173 @@ const DashboardModule = (() => {
       });
     });
 
-    // Sort activity feed by time (most recent first)
     recentActivity.sort((a, b) => (b.time || '') > (a.time || '') ? 1 : -1);
-
-    // ── Render ──────────────────────────────────────────────────
 
     const buildsPct = (n) => totalBuilds > 0 ? Math.round(n / totalBuilds * 100) : 0;
 
-    content.innerHTML = `
-      <!-- Stats Row -->
-      <div class="stats-grid">
-        <div class="stat-card">
-          <div class="stat-value" style="color:var(--color-primary)">${connections.length}</div>
-          <div class="stat-label"><i class="fa-solid fa-plug"></i> Connected Orgs</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-value" style="color:var(--color-info)">${totalProjects}</div>
-          <div class="stat-label"><i class="fa-solid fa-folder-open"></i> Total Projects</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-value" style="color:var(--color-success)">${buildSucceeded}</div>
-          <div class="stat-label"><i class="fa-solid fa-circle-check"></i> Builds Succeeded</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-value" style="color:var(--color-danger)">${buildFailed}</div>
-          <div class="stat-label"><i class="fa-solid fa-circle-xmark"></i> Builds Failed</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-value" style="color:var(--color-warning)">${buildInProg}</div>
-          <div class="stat-label"><i class="fa-solid fa-spinner fa-spin"></i> In Progress</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-value" style="color:var(--text-secondary)">${totalBuilds}</div>
-          <div class="stat-label"><i class="fa-solid fa-rocket"></i> Total Build Runs</div>
-        </div>
-      </div>
-
-      <!-- Build health bar -->
-      ${totalBuilds > 0 ? `
-      <div class="card mb-16">
-        <div class="card-header"><span class="card-title"><i class="fa-solid fa-chart-bar"></i> Build Health</span></div>
-        <div style="margin-bottom:6px;font-size:.8rem;display:flex;gap:16px;flex-wrap:wrap">
-          <span style="color:var(--color-success)">🟢 Succeeded: ${buildSucceeded} (${buildsPct(buildSucceeded)}%)</span>
-          <span style="color:var(--color-danger)">🔴 Failed: ${buildFailed} (${buildsPct(buildFailed)}%)</span>
-          <span style="color:var(--color-warning)">🟡 In Progress: ${buildInProg}</span>
-        </div>
-        <div style="display:flex;height:14px;border-radius:20px;overflow:hidden;gap:2px">
-          ${buildSucceeded > 0 ? `<div style="flex:${buildSucceeded};background:var(--color-success)" title="Succeeded"></div>` : ''}
-          ${buildFailed   > 0 ? `<div style="flex:${buildFailed};background:var(--color-danger)"  title="Failed"></div>` : ''}
-          ${buildInProg   > 0 ? `<div style="flex:${buildInProg};background:var(--color-warning)" title="In Progress"></div>` : ''}
-        </div>
-      </div>
-      ` : ''}
-
-      <!-- Two-column: org health + activity -->
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;flex-wrap:wrap" class="dash-cols">
-        <!-- Org Health -->
-        <div class="card">
-          <div class="card-header"><span class="card-title"><i class="fa-solid fa-heart-pulse"></i> Organization Health</span></div>
-          <div style="display:flex;flex-direction:column;gap:10px">
-            ${orgResults.map(org => _orgHealthHtml(org)).join('')}
+    // Build widget HTML map
+    const widgets = {
+      stats: `
+        <div class="dash-widget" id="dw-stats" draggable="true" data-widget="stats">
+          <div class="drag-handle no-print" title="Drag to reorder"><i class="fa-solid fa-grip-vertical"></i></div>
+          <div class="stats-grid">
+            <div class="stat-card">
+              <div class="stat-value" style="color:var(--color-primary)">${connections.length}</div>
+              <div class="stat-label"><i class="fa-solid fa-plug"></i> Connected Orgs</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-value" style="color:var(--color-info)">${totalProjects}</div>
+              <div class="stat-label"><i class="fa-solid fa-folder-open"></i> Total Projects</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-value" style="color:var(--color-success)">${buildSucceeded}</div>
+              <div class="stat-label"><i class="fa-solid fa-circle-check"></i> Builds Succeeded</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-value" style="color:var(--color-danger)">${buildFailed}</div>
+              <div class="stat-label"><i class="fa-solid fa-circle-xmark"></i> Builds Failed</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-value" style="color:var(--color-warning)">${buildInProg}</div>
+              <div class="stat-label"><i class="fa-solid fa-spinner fa-spin"></i> In Progress</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-value" style="color:var(--text-secondary)">${totalBuilds}</div>
+              <div class="stat-label"><i class="fa-solid fa-rocket"></i> Total Build Runs</div>
+            </div>
           </div>
-        </div>
+        </div>`,
 
-        <!-- Recent Activity -->
-        <div class="card">
-          <div class="card-header"><span class="card-title"><i class="fa-solid fa-clock-rotate-left"></i> Recent Activity</span></div>
-          ${recentActivity.length === 0 ? `
-            <div class="empty-state" style="padding:20px">
-              <i class="fa-regular fa-calendar-xmark"></i>
-              <p>No recent activity found.</p>
-            </div>` : `
-          <div class="activity-feed">
-            ${recentActivity.slice(0, 10).map(a => `
-              <div class="activity-item">
-                <div class="activity-icon">${a.icon}</div>
-                <div class="activity-text">
-                  ${a.text}
-                  <div class="text-muted text-sm">${_esc(a.org)}</div>
-                </div>
-                <div class="activity-time">${a.time ? _relativeTime(new Date(a.time)) : ''}</div>
-              </div>`).join('')}
-          </div>`}
-        </div>
-      </div>
+      health: totalBuilds > 0 ? `
+        <div class="dash-widget card mb-16" id="dw-health" draggable="true" data-widget="health">
+          <div class="drag-handle no-print" title="Drag to reorder"><i class="fa-solid fa-grip-vertical"></i></div>
+          <div class="card-header"><span class="card-title"><i class="fa-solid fa-chart-bar"></i> Build Health</span></div>
+          <div style="margin-bottom:6px;font-size:.8rem;display:flex;gap:16px;flex-wrap:wrap">
+            <span style="color:var(--color-success)">🟢 Succeeded: ${buildSucceeded} (${buildsPct(buildSucceeded)}%)</span>
+            <span style="color:var(--color-danger)">🔴 Failed: ${buildFailed} (${buildsPct(buildFailed)}%)</span>
+            <span style="color:var(--color-warning)">🟡 In Progress: ${buildInProg}</span>
+          </div>
+          <div style="display:flex;height:14px;border-radius:20px;overflow:hidden;gap:2px">
+            ${buildSucceeded > 0 ? `<div style="flex:${buildSucceeded};background:var(--color-success)" title="Succeeded"></div>` : ''}
+            ${buildFailed   > 0 ? `<div style="flex:${buildFailed};background:var(--color-danger)"  title="Failed"></div>` : ''}
+            ${buildInProg   > 0 ? `<div style="flex:${buildInProg};background:var(--color-warning)" title="In Progress"></div>` : ''}
+          </div>
+        </div>` : '',
 
-      <!-- Per-org detail cards -->
-      <div class="section-title">Organizations</div>
-      <div class="grid-3">
-        ${orgResults.map(org => _orgDetailCard(org)).join('')}
-      </div>
-    `;
+      orgActivity: `
+        <div class="dash-widget" id="dw-org-activity" draggable="true" data-widget="orgActivity" style="display:grid;grid-template-columns:1fr 1fr;gap:16px" class="dash-cols">
+          <div class="drag-handle no-print" title="Drag to reorder" style="grid-column:1/-1"><i class="fa-solid fa-grip-vertical"></i></div>
+          <div class="card">
+            <div class="card-header"><span class="card-title"><i class="fa-solid fa-heart-pulse"></i> Organization Health</span></div>
+            <div style="display:flex;flex-direction:column;gap:10px">
+              ${orgResults.map(org => _orgHealthHtml(org, dateFilter)).join('')}
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-header"><span class="card-title"><i class="fa-solid fa-clock-rotate-left"></i> Recent Activity</span></div>
+            ${recentActivity.length === 0 ? `
+              <div class="empty-state" style="padding:20px">
+                <i class="fa-regular fa-calendar-xmark"></i>
+                <p>No recent activity found.</p>
+              </div>` : `
+            <div class="activity-feed">
+              ${recentActivity.slice(0, 10).map(a => `
+                <div class="activity-item">
+                  <div class="activity-icon">${a.icon}</div>
+                  <div class="activity-text">
+                    ${a.text}
+                    <div class="text-muted text-sm">${_esc(a.org)}</div>
+                  </div>
+                  <div class="activity-time">${a.time ? _relativeTime(new Date(a.time)) : ''}</div>
+                </div>`).join('')}
+            </div>`}
+          </div>
+        </div>`,
 
-    // Responsive: stack columns on narrow screens
-    const dashCols = content.querySelector('.dash-cols');
-    if (dashCols) {
-      const obs = new ResizeObserver(entries => {
-        for (const entry of entries) {
-          dashCols.style.gridTemplateColumns = entry.contentRect.width < 600 ? '1fr' : '1fr 1fr';
+      orgs: `
+        <div class="dash-widget" id="dw-orgs" draggable="true" data-widget="orgs">
+          <div class="drag-handle no-print" title="Drag to reorder"><i class="fa-solid fa-grip-vertical"></i></div>
+          <div class="section-title">Organizations</div>
+          <div class="grid-3">
+            ${orgResults.map(org => _orgDetailCard(org, dateFilter)).join('')}
+          </div>
+        </div>`,
+    };
+
+    // Apply saved widget order
+    const savedOrder = _getWidgetOrder();
+    const widgetKeys = savedOrder.length > 0
+      ? [...savedOrder.filter(k => widgets[k]), ...Object.keys(widgets).filter(k => !savedOrder.includes(k))]
+      : Object.keys(widgets);
+
+    content.innerHTML = `<div id="dash-widget-container">${widgetKeys.map(k => widgets[k]).join('')}</div>`;
+
+    // Init drag-and-drop
+    _initWidgetDnD(content);
+  }
+
+  function _filterBuilds(builds, dateFilter) {
+    if (!dateFilter.minTime && !dateFilter.maxTime) return builds;
+    return builds.filter(b => {
+      const t = b.finishTime || b.startTime;
+      if (!t) return true;
+      const time = new Date(t).getTime();
+      if (dateFilter.minTime && time < new Date(dateFilter.minTime).getTime()) return false;
+      if (dateFilter.maxTime && time > new Date(dateFilter.maxTime).getTime()) return false;
+      return true;
+    });
+  }
+
+  // ─── Drag and drop ─────────────────────────────────────────────
+
+  function _getWidgetOrder() {
+    try { return JSON.parse(localStorage.getItem(WIDGET_ORDER_KEY) || '[]'); } catch { return []; }
+  }
+
+  function _saveWidgetOrder(order) {
+    localStorage.setItem(WIDGET_ORDER_KEY, JSON.stringify(order));
+  }
+
+  function _initWidgetDnD(content) {
+    const container = content.querySelector('#dash-widget-container');
+    if (!container) return;
+    let dragSrc = null;
+
+    container.querySelectorAll('.dash-widget').forEach(widget => {
+      widget.addEventListener('dragstart', e => {
+        dragSrc = widget;
+        e.dataTransfer.effectAllowed = 'move';
+        widget.style.opacity = '0.5';
+      });
+      widget.addEventListener('dragend', () => {
+        widget.style.opacity = '';
+        // Save order
+        const order = [...container.querySelectorAll('.dash-widget')].map(w => w.dataset.widget);
+        _saveWidgetOrder(order);
+      });
+      widget.addEventListener('dragover', e => {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+        widget.style.outline = '2px dashed var(--color-primary)';
+      });
+      widget.addEventListener('dragleave', () => {
+        widget.style.outline = '';
+      });
+      widget.addEventListener('drop', e => {
+        e.preventDefault();
+        widget.style.outline = '';
+        if (dragSrc && dragSrc !== widget) {
+          const allWidgets = [...container.querySelectorAll('.dash-widget')];
+          const srcIdx = allWidgets.indexOf(dragSrc);
+          const dstIdx = allWidgets.indexOf(widget);
+          if (srcIdx < dstIdx) {
+            container.insertBefore(dragSrc, widget.nextSibling);
+          } else {
+            container.insertBefore(dragSrc, widget);
+          }
         }
       });
-      obs.observe(dashCols.parentElement);
-    }
+    });
   }
 
   async function _fetchOrgData(conn) {
@@ -198,12 +338,11 @@ const DashboardModule = (() => {
     };
   }
 
-  /** Fetch recent builds from first few projects (avoid excessive API calls) */
   async function _fetchRecentBuildsAllProjects(conn) {
     const projResult = await AzureApi.getProjects(conn.orgUrl, conn.pat);
     if (projResult.error) return [];
 
-    const projects = (projResult.value || []).slice(0, 5); // limit to 5 projects
+    const projects = (projResult.value || []).slice(0, 5);
     const buildLists = await Promise.all(
       projects.map(p => AzureApi.getBuildRuns(conn.orgUrl, p.name, conn.pat))
     );
@@ -221,8 +360,9 @@ const DashboardModule = (() => {
     return builds;
   }
 
-  function _orgHealthHtml(org) {
-    const health = _orgHealth(org);
+  function _orgHealthHtml(org, dateFilter) {
+    const builds = _filterBuilds(org.builds, dateFilter);
+    const health = _orgHealth({ ...org, builds });
     return `
       <div class="org-health-card">
         <div style="display:flex;align-items:center;justify-content:space-between">
@@ -233,17 +373,18 @@ const DashboardModule = (() => {
         </div>
         <div class="org-health-stats">
           <span><i class="fa-solid fa-folder-open"></i> ${org.projectCount} projects</span>
-          <span><i class="fa-solid fa-rocket"></i> ${org.builds.length} recent runs</span>
+          <span><i class="fa-solid fa-rocket"></i> ${builds.length} recent runs</span>
         </div>
         ${org.error ? `<div class="text-sm" style="color:var(--color-danger)">${_esc(org.error)}</div>` : ''}
       </div>`;
   }
 
-  function _orgDetailCard(org) {
-    const succeeded = org.builds.filter(b => (b.result || '').toLowerCase() === 'succeeded').length;
-    const failed    = org.builds.filter(b => (b.result || '').toLowerCase() === 'failed').length;
-    const total     = org.builds.length;
-    const health    = _orgHealth(org);
+  function _orgDetailCard(org, dateFilter) {
+    const builds = _filterBuilds(org.builds, dateFilter);
+    const succeeded = builds.filter(b => (b.result || '').toLowerCase() === 'succeeded').length;
+    const failed    = builds.filter(b => (b.result || '').toLowerCase() === 'failed').length;
+    const total     = builds.length;
+    const health    = _orgHealth({ ...org, builds });
 
     return `
       <div class="card">

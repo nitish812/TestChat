@@ -30,11 +30,12 @@ const ConnectionsModule = (() => {
 
   function getById(id) { return _load().find(c => c.id === id) || null; }
 
-  function add(name, orgUrl, pat, defaultProject) {
+  function add(name, orgUrl, pat, defaultProject, patExpiry) {
     const connections = _load();
     const id = 'conn_' + Date.now();
     const conn = { id, name, orgUrl: orgUrl.replace(/\/$/, ''), pat, active: true, createdAt: new Date().toISOString() };
     if (defaultProject) conn.defaultProject = defaultProject;
+    if (patExpiry) conn.patExpiry = patExpiry;
     connections.push(conn);
     _save(connections);
     return id;
@@ -97,6 +98,11 @@ const ConnectionsModule = (() => {
             <span class="form-hint">PAT is stored in browser localStorage.</span>
           </div>
           <div class="form-group">
+            <label for="conn-pat-expiry">PAT Expiry Date <span class="text-muted text-sm">(optional)</span></label>
+            <input type="date" id="conn-pat-expiry" />
+            <span class="form-hint">Set to receive expiry warnings on the connection card.</span>
+          </div>
+          <div class="form-group">
             <label for="conn-project">Default Project <span class="text-muted text-sm">(optional)</span></label>
             <select id="conn-project" disabled>
               <option value="">Enter URL &amp; PAT first…</option>
@@ -149,6 +155,7 @@ const ConnectionsModule = (() => {
           <div class="connection-url">${_esc(c.orgUrl)}</div>
           <div class="connection-pat font-mono">PAT: ${maskPat(c.pat)}</div>
           ${c.defaultProject ? `<div class="connection-url">Project: ${_esc(c.defaultProject)}</div>` : '<div class="connection-url text-muted">Project: All</div>'}
+          ${_expiryBadge(c.patExpiry)}
         </div>
         <div class="connection-actions">
           <label class="toggle-switch" title="${c.active !== false ? 'Active' : 'Inactive'}">
@@ -198,6 +205,7 @@ const ConnectionsModule = (() => {
     container.querySelector('#conn-name').value = c.name;
     container.querySelector('#conn-url').value = c.orgUrl;
     container.querySelector('#conn-pat').value = c.pat;
+    container.querySelector('#conn-pat-expiry').value = c.patExpiry || '';
     container.querySelector('#conn-cancel-btn').classList.remove('hidden');
     container.querySelector('#conn-form-card').scrollIntoView({ behavior: 'smooth' });
     // Populate project dropdown with saved defaultProject pre-selected
@@ -210,6 +218,7 @@ const ConnectionsModule = (() => {
     container.querySelector('#conn-name').value = '';
     container.querySelector('#conn-url').value = '';
     container.querySelector('#conn-pat').value = '';
+    container.querySelector('#conn-pat-expiry').value = '';
     container.querySelector('#conn-cancel-btn').classList.add('hidden');
     container.querySelector('#conn-form-error').classList.add('hidden');
     container.querySelector('#conn-test-result').textContent = '';
@@ -267,6 +276,7 @@ const ConnectionsModule = (() => {
       const url           = container.querySelector('#conn-url').value.trim();
       const pat           = container.querySelector('#conn-pat').value.trim();
       const defaultProject= container.querySelector('#conn-project').value;
+      const patExpiry     = container.querySelector('#conn-pat-expiry').value;
 
       if (!name || !url || !pat) {
         errorEl.textContent = 'All fields are required.';
@@ -288,10 +298,10 @@ const ConnectionsModule = (() => {
       }
 
       if (editId) {
-        update(editId, { name, orgUrl: url, pat, defaultProject: defaultProject || undefined });
+        update(editId, { name, orgUrl: url, pat, defaultProject: defaultProject || undefined, patExpiry: patExpiry || undefined });
         App.showToast('Connection updated successfully.', 'success');
       } else {
-        add(name, url, pat, defaultProject || undefined);
+        add(name, url, pat, defaultProject || undefined, patExpiry || undefined);
         App.showToast('Connection added successfully.', 'success');
       }
 
@@ -336,5 +346,28 @@ const ConnectionsModule = (() => {
       .replace(/"/g, '&quot;');
   }
 
-  return { getAll, getActive, getById, add, update, remove, toggleActive, maskPat, render };
+  /**
+   * Returns a coloured badge for PAT expiry status.
+   * green = valid (> 30 days), yellow = expiring soon (≤ 30 days), red = expired.
+   */
+  function _expiryBadge(patExpiry) {
+    if (!patExpiry) return '';
+    const now  = Date.now();
+    const exp  = new Date(patExpiry).getTime();
+    const days = Math.ceil((exp - now) / 86400000);
+    if (days < 0)  return `<div class="pat-expiry-badge badge-danger" title="PAT expired"><i class="fa-solid fa-circle-xmark"></i> PAT expired</div>`;
+    if (days <= 30) return `<div class="pat-expiry-badge badge-warning" title="Expires in ${days} day(s)"><i class="fa-solid fa-triangle-exclamation"></i> Expires in ${days}d</div>`;
+    return `<div class="pat-expiry-badge badge-success" title="Expires ${new Date(patExpiry).toLocaleDateString()}"><i class="fa-solid fa-circle-check"></i> Valid (${days}d)</div>`;
+  }
+
+  /** Compute expiry status for external use (used by app.js for init toasts). */
+  function getExpiryStatus(patExpiry) {
+    if (!patExpiry) return null;
+    const days = Math.ceil((new Date(patExpiry).getTime() - Date.now()) / 86400000);
+    if (days < 0)  return { status: 'expired',  days };
+    if (days <= 30) return { status: 'warning',  days };
+    return { status: 'ok', days };
+  }
+
+  return { getAll, getActive, getById, add, update, remove, toggleActive, maskPat, getExpiryStatus, render };
 })();

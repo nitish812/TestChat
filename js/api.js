@@ -168,6 +168,84 @@ const AzureApi = (() => {
     return _fetch(_url(releaseOrgUrl, `${encodeURIComponent(project)}/_apis/release/releases`, { $top: 20 }), pat);
   }
 
+  /**
+   * Update a work item's state via PATCH (JSON Patch document).
+   * @param {string} orgUrl
+   * @param {number|string} id  Work item ID
+   * @param {string} state      New state value
+   * @param {string} pat
+   */
+  async function updateWorkItemState(orgUrl, id, state, pat) {
+    const body = JSON.stringify([
+      { op: 'add', path: '/fields/System.State', value: state },
+    ]);
+    return _fetch(
+      _url(orgUrl, `_apis/wit/workitems/${id}`),
+      pat,
+      { method: 'PATCH', headers: { 'Content-Type': 'application/json-patch+json' }, body }
+    );
+  }
+
+  /**
+   * Update arbitrary work item fields via PATCH (JSON Patch document).
+   * @param {string} orgUrl
+   * @param {number|string} id
+   * @param {Object} fieldsMap  e.g. { 'System.State': 'Done', 'System.AssignedTo': 'user@org' }
+   * @param {string} pat
+   */
+  async function updateWorkItemFields(orgUrl, id, fieldsMap, pat) {
+    const ops = Object.entries(fieldsMap).map(([path, value]) => ({
+      op: 'add', path: `/fields/${path}`, value,
+    }));
+    return _fetch(
+      _url(orgUrl, `_apis/wit/workitems/${id}`),
+      pat,
+      { method: 'PATCH', headers: { 'Content-Type': 'application/json-patch+json' }, body: JSON.stringify(ops) }
+    );
+  }
+
+  /**
+   * Create a new work item via POST (JSON Patch document).
+   * @param {string} orgUrl
+   * @param {string} project
+   * @param {string} type       e.g. 'Task', 'Bug', 'User Story'
+   * @param {Object} fieldsMap  e.g. { 'System.Title': 'My task' }
+   * @param {string} pat
+   */
+  async function createWorkItem(orgUrl, project, type, fieldsMap, pat) {
+    const ops = Object.entries(fieldsMap).map(([path, value]) => ({
+      op: 'add', path: `/fields/${path}`, value,
+    }));
+    return _fetch(
+      _url(orgUrl, `${encodeURIComponent(project)}/_apis/wit/workitems/${encodeURIComponent('$' + type)}`),
+      pat,
+      { method: 'POST', headers: { 'Content-Type': 'application/json-patch+json' }, body: JSON.stringify(ops) }
+    );
+  }
+
+  /**
+   * Get comments for a work item.
+   */
+  async function getWorkItemComments(orgUrl, id, pat) {
+    return _fetch(_url(orgUrl, `_apis/wit/workitems/${id}/comments`, { 'api-version': '7.0-preview.3' }), pat);
+  }
+
+  /**
+   * Add a comment to a work item.
+   */
+  async function addWorkItemComment(orgUrl, id, text, pat) {
+    return _fetch(
+      _url(orgUrl, `_apis/wit/workitems/${id}/comments`, { 'api-version': '7.0-preview.3' }),
+      pat,
+      { method: 'POST', body: JSON.stringify({ text }) }
+    );
+  }
+
+  /** Get a single work item with relations expanded. */
+  async function getWorkItemWithRelations(orgUrl, id, pat) {
+    return _fetch(_url(orgUrl, `_apis/wit/workitems/${id}`, { $expand: 'relations' }), pat);
+  }
+
   // ─────────────────────────────────────────────────────────────
   // Helpers
   // ─────────────────────────────────────────────────────────────
@@ -187,9 +265,15 @@ const AzureApi = (() => {
     getProjects,
     getWorkItems,
     getWorkItemDetail,
+    getWorkItemWithRelations,
     getBuildDefinitions,
     getBuildRuns,
     getReleaseDefinitions,
     getReleases,
+    updateWorkItemState,
+    updateWorkItemFields,
+    createWorkItem,
+    getWorkItemComments,
+    addWorkItemComment,
   };
 })();

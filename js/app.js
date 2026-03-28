@@ -23,6 +23,7 @@ const App = (() => {
     _restoreTheme();
     _bindGlobalEvents();
     refreshOrgSelector();
+    _checkPatExpiry();
 
     // Initial navigation
     const hash = window.location.hash || '#/dashboard';
@@ -30,6 +31,21 @@ const App = (() => {
 
     // Listen for hash changes
     window.addEventListener('hashchange', () => _handleHashChange(window.location.hash));
+  }
+
+  /** Show toasts for expired / soon-expiring PATs */
+  function _checkPatExpiry() {
+    const connections = ConnectionsModule.getAll();
+    connections.forEach(c => {
+      if (!c.patExpiry) return;
+      const status = ConnectionsModule.getExpiryStatus(c.patExpiry);
+      if (!status) return;
+      if (status.status === 'expired') {
+        showToast(`PAT for "${c.name}" has expired. Please renew it.`, 'error');
+      } else if (status.status === 'warning') {
+        showToast(`PAT for "${c.name}" expires in ${status.days} day(s). Consider renewing.`, 'warning');
+      }
+    });
   }
 
   // ─── Routing ───────────────────────────────────────────────────

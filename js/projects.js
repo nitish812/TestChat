@@ -3,11 +3,34 @@
  *
  * Fetches all projects from active connections and renders them
  * in a card-based grid with search and org filter.
+ * Supports pinning/favoriting projects via ado_pinned_projects localStorage key.
  */
 
 const ProjectsModule = (() => {
   let _projects = [];   // { project, connectionId, connectionName, orgUrl, pat }
   let _loading  = false;
+  const PINNED_KEY = 'ado_pinned_projects';
+
+  // ─── Pin helpers ───────────────────────────────────────────────
+
+  function _getPinned() {
+    try { return JSON.parse(localStorage.getItem(PINNED_KEY) || '[]'); } catch { return []; }
+  }
+
+  function _setPinned(pins) {
+    localStorage.setItem(PINNED_KEY, JSON.stringify(pins));
+  }
+
+  function _isPinned(connId, projectName) {
+    return _getPinned().some(p => p.connId === connId && p.name === projectName);
+  }
+
+  function _togglePin(connId, projectName) {
+    let pins = _getPinned();
+    const idx = pins.findIndex(p => p.connId === connId && p.name === projectName);
+    if (idx >= 0) { pins.splice(idx, 1); } else { pins.push({ connId, name: projectName }); }
+    _setPinned(pins);
+  }
 
   // ─── Public ────────────────────────────────────────────────────
 
@@ -127,7 +150,29 @@ const ProjectsModule = (() => {
       return;
     }
 
-    grid.innerHTML = filtered.map(p => _cardHtml(p)).join('');
+    const pinned   = filtered.filter(p => _isPinned(p.connectionId, p.project.name));
+    const unpinned = filtered.filter(p => !_isPinned(p.connectionId, p.project.name));
+
+    let html = '';
+    if (pinned.length > 0) {
+      html += `<div class="section-title pinned-section-title" style="grid-column:1/-1"><i class="fa-solid fa-star" style="color:var(--color-warning)"></i> Pinned Projects</div>`;
+      html += pinned.map(p => _cardHtml(p)).join('');
+      if (unpinned.length > 0) {
+        html += `<div class="section-title" style="grid-column:1/-1">All Projects</div>`;
+      }
+    }
+    html += unpinned.map(p => _cardHtml(p)).join('');
+
+    grid.innerHTML = html;
+
+    // Bind pin buttons
+    grid.querySelectorAll('.proj-pin-btn').forEach(btn => {
+      btn.addEventListener('click', e => {
+        e.stopPropagation();
+        _togglePin(btn.dataset.connId, btn.dataset.project);
+        _applyFilter(container, selectedOrgId);
+      });
+    });
 
     // Bind quick-action buttons
     grid.querySelectorAll('.proj-wi-btn').forEach(btn => {
@@ -151,6 +196,7 @@ const ProjectsModule = (() => {
 
   function _cardHtml(entry) {
     const p = entry.project;
+    const pinned = _isPinned(entry.connectionId, p.name);
     const visibility = p.visibility === 'public'
       ? '<span class="badge badge-success">Public</span>'
       : '<span class="badge badge-secondary">Private</span>';
@@ -170,7 +216,13 @@ const ProjectsModule = (() => {
             <div class="project-name">${_esc(p.name)}</div>
             <div class="project-org"><i class="fa-brands fa-windows" style="font-size:.7rem"></i> ${_esc(entry.connectionName)}</div>
           </div>
-          ${visibility}
+          <div style="display:flex;gap:6px;align-items:center">
+            ${visibility}
+            <button class="btn-icon proj-pin-btn" data-conn-id="${entry.connectionId}" data-project="${_esc(p.name)}"
+              title="${pinned ? 'Unpin project' : 'Pin project'}" style="color:${pinned ? 'var(--color-warning)' : 'var(--text-muted)'}">
+              <i class="fa-${pinned ? 'solid' : 'regular'} fa-star"></i>
+            </button>
+          </div>
         </div>
         <div class="project-desc">${desc}</div>
         <div class="project-meta">
