@@ -3,11 +3,24 @@
  *
  * Fetches build definitions and recent runs from a selected project
  * and renders them in a table with color-coded status badges.
+ *
+ * Improvements:
+ *  #2  Collapsible connection groups
+ *  #3  Column sorting
+ *  #4  Resizable columns
+ *  #7  Breadcrumb navigation
  */
 
 const PipelinesModule = (() => {
   let _pipelines   = [];   // merged build definition + last run
   let _context     = null;
+
+  // #3 Column sorting
+  let _sortCol = '';
+  let _sortDir = 'asc';
+
+  // #2 Collapsible groups — persists collapsed state within session
+  const _collapsedGroups = new Set();
 
   // ─── Public ────────────────────────────────────────────────────
 
@@ -161,6 +174,33 @@ const PipelinesModule = (() => {
     _renderPipelineList(container);
   }
 
+  function _sortPipelines(items) {
+    if (!_sortCol) return items;
+    const dir = _sortDir === 'asc' ? 1 : -1;
+    return [...items].sort((a, b) => {
+      let av, bv;
+      switch (_sortCol) {
+        case 'name':        av = (a.def.name || '').toLowerCase();                            bv = (b.def.name || '').toLowerCase(); break;
+        case 'status':      av = _buildStatus(a.lastBuild).key;                               bv = _buildStatus(b.lastBuild).key; break;
+        case 'branch':      av = (a.lastBuild?.sourceBranch || '').replace('refs/heads/', ''); bv = (b.lastBuild?.sourceBranch || '').replace('refs/heads/', ''); break;
+        case 'triggeredBy': av = (a.lastBuild?.requestedFor?.displayName || '').toLowerCase(); bv = (b.lastBuild?.requestedFor?.displayName || '').toLowerCase(); break;
+        case 'duration':    av = a.lastBuild?.startTime ? new Date(a.lastBuild.startTime).getTime() : 0; bv = b.lastBuild?.startTime ? new Date(b.lastBuild.startTime).getTime() : 0; break;
+        case 'finished':    av = a.lastBuild?.finishTime || '';                               bv = b.lastBuild?.finishTime || ''; break;
+        default: return 0;
+      }
+      if (av < bv) return -1 * dir;
+      if (av > bv) return  1 * dir;
+      return 0;
+    });
+  }
+
+  function _sortIcon(col) {
+    if (_sortCol !== col) return '<i class="fa-solid fa-sort text-muted" style="font-size:.7rem"></i>';
+    return _sortDir === 'asc'
+      ? '<i class="fa-solid fa-sort-up" style="font-size:.7rem;color:var(--color-primary)"></i>'
+      : '<i class="fa-solid fa-sort-down" style="font-size:.7rem;color:var(--color-primary)"></i>';
+  }
+
   function _renderPipelineList(container) {
     const content   = container.querySelector('#pipe-content');
     const search    = (container.querySelector('#pipe-search')?.value || '').toLowerCase();
@@ -177,6 +217,9 @@ const PipelinesModule = (() => {
       return s.key === statusF;
     });
 
+    // #3 Apply sort
+    filtered = _sortPipelines(filtered);
+
     if (filtered.length === 0) {
       content.innerHTML = `
         <div class="empty-state">
@@ -186,21 +229,82 @@ const PipelinesModule = (() => {
       return;
     }
 
+    // #7 Breadcrumb
+    const breadcrumb = _context ? `
+      <nav class="breadcrumb mb-8">
+        <a href="#/dashboard">Dashboard</a>
+        <span class="bc-sep">›</span>
+        <a href="#/projects">Projects</a>
+        <span class="bc-sep">›</span>
+        <span class="bc-org">${_esc(_context.conn.name)}</span>
+        <span class="bc-sep">›</span>
+        <span class="bc-current">${_esc(_context.project)}</span>
+      </nav>` : '';
+
+    // #2 Group by connection name (single group in single-project mode)
+    const groupName = _context ? _context.conn.name : 'Pipelines';
+    const isCollapsed = _collapsedGroups.has(groupName);
+    const rowsHtml = isCollapsed ? '' : filtered.map(p => _pipelineRow(p)).join('');
+    const chevron  = isCollapsed ? 'fa-chevron-right' : 'fa-chevron-down';
+
     content.innerHTML = `
+      ${breadcrumb}
       <p class="text-sm text-muted mb-8">${filtered.length} pipeline${filtered.length !== 1 ? 's' : ''}</p>
       <div class="table-wrapper">
-        <table>
+        <table id="pipe-table" style="table-layout:fixed;min-width:600px">
           <thead>
             <tr>
-              <th>Pipeline</th><th>Last Status</th><th>Branch</th>
-              <th>Triggered By</th><th>Duration</th><th>Last Run</th>
+              <th data-col="name" style="cursor:pointer">Pipeline ${_sortIcon('name')}</th>
+              <th data-col="status" style="cursor:pointer">Last Status ${_sortIcon('status')}</th>
+              <th data-col="branch" style="cursor:pointer">Branch ${_sortIcon('branch')}</th>
+              <th data-col="triggeredBy" style="cursor:pointer">Triggered By ${_sortIcon('triggeredBy')}</th>
+              <th data-col="duration" style="cursor:pointer">Duration ${_sortIcon('duration')}</th>
+              <th data-col="finished" style="cursor:pointer">Last Run ${_sortIcon('finished')}</th>
             </tr>
           </thead>
           <tbody>
-            ${filtered.map(p => _pipelineRow(p)).join('')}
+            <tr class="group-header" data-group="${_esc(groupName)}">
+              <td colspan="6">
+                <button class="btn-group-toggle" style="background:none;border:none;cursor:pointer;font-weight:600;display:flex;align-items:center;gap:6px;padding:0">
+                  <i class="fa-solid ${chevron}" style="font-size:.75rem"></i>
+                  ${_esc(groupName)} (${filtered.length} item${filtered.length !== 1 ? 's' : ''})
+                </button>
+              </td>
+            </tr>
+            ${rowsHtml}
           </tbody>
         </table>
       </div>`;
+
+    // #4 Resizable columns
+    _makeColumnsResizable(content.querySelector('#pipe-table'));
+
+    // #3 Sort on <th> click
+    content.querySelectorAll('thead th[data-col]').forEach(th => {
+      th.addEventListener('click', () => {
+        const col = th.dataset.col;
+        if (_sortCol === col) {
+          _sortDir = _sortDir === 'asc' ? 'desc' : 'asc';
+        } else {
+          _sortCol = col;
+          _sortDir = 'asc';
+        }
+        _renderPipelineList(container);
+      });
+    });
+
+    // #2 Group toggle
+    content.querySelectorAll('.btn-group-toggle').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const group = btn.closest('tr').dataset.group;
+        if (_collapsedGroups.has(group)) {
+          _collapsedGroups.delete(group);
+        } else {
+          _collapsedGroups.add(group);
+        }
+        _renderPipelineList(container);
+      });
+    });
   }
 
   function _pipelineRow(entry) {
@@ -231,6 +335,36 @@ const PipelinesModule = (() => {
         <td class="text-sm text-muted">${duration}</td>
         <td class="text-sm text-muted">${lastRun}</td>
       </tr>`;
+  }
+
+  // #4 Resizable columns helper
+  function _makeColumnsResizable(tableEl) {
+    if (!tableEl) return;
+    const ths = tableEl.querySelectorAll('thead th');
+    ths.forEach(th => {
+      th.style.position = 'relative';
+      th.style.overflow = 'hidden';
+      const handle = document.createElement('div');
+      handle.className = 'col-resizer';
+      th.appendChild(handle);
+
+      let startX, startW;
+      handle.addEventListener('mousedown', e => {
+        e.stopPropagation();
+        startX = e.pageX;
+        startW = th.offsetWidth;
+        const onMove = mv => {
+          const newW = Math.max(40, startW + mv.pageX - startX);
+          th.style.width = newW + 'px';
+        };
+        const onUp = () => {
+          document.removeEventListener('mousemove', onMove);
+          document.removeEventListener('mouseup', onUp);
+        };
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp);
+      });
+    });
   }
 
   // ─── Status helpers ────────────────────────────────────────────

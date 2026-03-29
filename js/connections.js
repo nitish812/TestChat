@@ -2,7 +2,9 @@
  * connections.js — Connection Manager
  *
  * Manages Azure DevOps connections stored in localStorage.
- * Each connection:  { id, name, orgUrl, pat, active, createdAt, defaultProject? }
+ * Each connection:  { id, name, orgUrl, pat, active, createdAt, defaultProject?, patExpiry? }
+ *
+ * Improvement #1: PAT Expiry Warning Badge
  */
 
 const ConnectionsModule = (() => {
@@ -30,11 +32,12 @@ const ConnectionsModule = (() => {
 
   function getById(id) { return _load().find(c => c.id === id) || null; }
 
-  function add(name, orgUrl, pat, defaultProject) {
+  function add(name, orgUrl, pat, defaultProject, patExpiry) {
     const connections = _load();
     const id = 'conn_' + Date.now();
     const conn = { id, name, orgUrl: orgUrl.replace(/\/$/, ''), pat, active: true, createdAt: new Date().toISOString() };
     if (defaultProject) conn.defaultProject = defaultProject;
+    if (patExpiry) conn.patExpiry = patExpiry;
     connections.push(conn);
     _save(connections);
     return id;
@@ -68,6 +71,28 @@ const ConnectionsModule = (() => {
     return '•'.repeat(pat.length - 4) + pat.slice(-4);
   }
 
+  /** Compute days remaining until PAT expiry. Returns null if no expiry set. */
+  function _patDaysRemaining(patExpiry) {
+    if (!patExpiry) return null;
+    const expDate = new Date(patExpiry);
+    if (isNaN(expDate.getTime())) return null;
+    const msPerDay = 1000 * 60 * 60 * 24;
+    return Math.ceil((expDate.getTime() - Date.now()) / msPerDay);
+  }
+
+  /** Build the expiry badge HTML for a connection. Returns '' if no expiry set. */
+  function _expiryBadge(c) {
+    const days = _patDaysRemaining(c.patExpiry);
+    if (days === null) return '';
+    if (days <= 0) {
+      return '<span class="badge badge-danger"><i class="fa-solid fa-triangle-exclamation"></i> PAT Expired</span>';
+    }
+    if (days <= 14) {
+      return '<span class="badge badge-warning"><i class="fa-solid fa-clock"></i> Expires in ' + days + 'd</span>';
+    }
+    return '';
+  }
+
   // ─── Render ────────────────────────────────────────────────────
 
   function render(container) {
@@ -95,6 +120,11 @@ const ConnectionsModule = (() => {
             <label for="conn-pat">Personal Access Token (PAT) <span style="color:var(--color-danger)">*</span></label>
             <input type="password" id="conn-pat" placeholder="••••••••••••••••" required autocomplete="new-password" />
             <span class="form-hint">PAT is stored in browser localStorage.</span>
+          </div>
+          <div class="form-group">
+            <label for="conn-expiry">PAT Expiry Date <span class="text-muted text-sm">(optional)</span></label>
+            <input type="date" id="conn-expiry" />
+            <span class="form-hint">Optional: set a reminder when your PAT expires.</span>
           </div>
           <div class="form-group">
             <label for="conn-project">Default Project <span class="text-muted text-sm">(optional)</span></label>
@@ -145,7 +175,7 @@ const ConnectionsModule = (() => {
       <div class="connection-item ${c.active === false ? 'inactive' : ''}" data-id="${c.id}">
         <div class="connection-icon"><i class="fa-brands fa-windows"></i></div>
         <div class="connection-info">
-          <div class="connection-name">${_esc(c.name)}</div>
+          <div class="connection-name">${_esc(c.name)} ${_expiryBadge(c)}</div>
           <div class="connection-url">${_esc(c.orgUrl)}</div>
           <div class="connection-pat font-mono">PAT: ${maskPat(c.pat)}</div>
           ${c.defaultProject ? `<div class="connection-url">Project: ${_esc(c.defaultProject)}</div>` : '<div class="connection-url text-muted">Project: All</div>'}
@@ -198,6 +228,7 @@ const ConnectionsModule = (() => {
     container.querySelector('#conn-name').value = c.name;
     container.querySelector('#conn-url').value = c.orgUrl;
     container.querySelector('#conn-pat').value = c.pat;
+    container.querySelector('#conn-expiry').value = c.patExpiry || '';
     container.querySelector('#conn-cancel-btn').classList.remove('hidden');
     container.querySelector('#conn-form-card').scrollIntoView({ behavior: 'smooth' });
     // Populate project dropdown with saved defaultProject pre-selected
@@ -210,6 +241,7 @@ const ConnectionsModule = (() => {
     container.querySelector('#conn-name').value = '';
     container.querySelector('#conn-url').value = '';
     container.querySelector('#conn-pat').value = '';
+    container.querySelector('#conn-expiry').value = '';
     container.querySelector('#conn-cancel-btn').classList.add('hidden');
     container.querySelector('#conn-form-error').classList.add('hidden');
     container.querySelector('#conn-test-result').textContent = '';
@@ -249,12 +281,12 @@ const ConnectionsModule = (() => {
       testBtn.disabled = false;
 
       if (res.valid) {
-        testResult.innerHTML = `<span style="color:var(--color-success)"><i class="fa-solid fa-circle-check"></i> Connected (${res.projectCount} project${res.projectCount !== 1 ? 's' : ''})</span>`;
+        testResult.innerHTML = '<span style="color:var(--color-success)"><i class="fa-solid fa-circle-check"></i> Connected (' + res.projectCount + ' project' + (res.projectCount !== 1 ? 's' : '') + ')</span>';
         // Populate project dropdown after successful test
         const currentProject = container.querySelector('#conn-project').value;
         _fetchProjectsForDropdown(container, url, pat, currentProject);
       } else {
-        testResult.innerHTML = `<span style="color:var(--color-danger)"><i class="fa-solid fa-circle-xmark"></i> ${_esc(res.message)}</span>`;
+        testResult.innerHTML = '<span style="color:var(--color-danger)"><i class="fa-solid fa-circle-xmark"></i> ' + _esc(res.message) + '</span>';
       }
     });
 
@@ -266,6 +298,7 @@ const ConnectionsModule = (() => {
       const name          = container.querySelector('#conn-name').value.trim();
       const url           = container.querySelector('#conn-url').value.trim();
       const pat           = container.querySelector('#conn-pat').value.trim();
+      const patExpiry     = container.querySelector('#conn-expiry').value.trim();
       const defaultProject= container.querySelector('#conn-project').value;
 
       if (!name || !url || !pat) {
@@ -288,10 +321,10 @@ const ConnectionsModule = (() => {
       }
 
       if (editId) {
-        update(editId, { name, orgUrl: url, pat, defaultProject: defaultProject || undefined });
+        update(editId, { name, orgUrl: url, pat, defaultProject: defaultProject || undefined, patExpiry: patExpiry || undefined });
         App.showToast('Connection updated successfully.', 'success');
       } else {
-        add(name, url, pat, defaultProject || undefined);
+        add(name, url, pat, defaultProject || undefined, patExpiry || undefined);
         App.showToast('Connection added successfully.', 'success');
       }
 
@@ -323,7 +356,7 @@ const ConnectionsModule = (() => {
     const projects = result.value || [];
     projSel.innerHTML =
       '<option value="">All Projects (no default)</option>' +
-      projects.map(p => `<option value="${_esc(p.name)}"${p.name === selected ? ' selected' : ''}>${_esc(p.name)}</option>`).join('');
+      projects.map(p => '<option value="' + _esc(p.name) + '"' + (p.name === selected ? ' selected' : '') + '>' + _esc(p.name) + '</option>').join('');
     projSel.disabled = false;
   }
 
