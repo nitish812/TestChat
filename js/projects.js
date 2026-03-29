@@ -152,7 +152,7 @@ const ProjectsModule = (() => {
 
     let html = '';
     if (pinnedItems.length > 0) {
-      html += `<div class="section-title" style="grid-column:1/-1">⭐ Pinned</div>`;
+      html += `<div class="section-title" style="grid-column:1/-1"><i class="fa-solid fa-star"></i> Pinned</div>`;
       html += pinnedItems.map(p => _cardHtml(p, pinned)).join('');
     }
     html += unpinnedItems.map(p => _cardHtml(p, pinned)).join('');

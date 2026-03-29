@@ -281,12 +281,12 @@ const ConnectionsModule = (() => {
       testBtn.disabled = false;
 
       if (res.valid) {
-        testResult.innerHTML = '<span style="color:var(--color-success)"><i class="fa-solid fa-circle-check"></i> Connected (' + res.projectCount + ' project' + (res.projectCount !== 1 ? 's' : '') + ')</span>';
+        testResult.innerHTML = `<span style="color:var(--color-success)"><i class="fa-solid fa-circle-check"></i> Connected (${res.projectCount} project${res.projectCount !== 1 ? 's' : ''})</span>`;
         // Populate project dropdown after successful test
         const currentProject = container.querySelector('#conn-project').value;
         _fetchProjectsForDropdown(container, url, pat, currentProject);
       } else {
-        testResult.innerHTML = '<span style="color:var(--color-danger)"><i class="fa-solid fa-circle-xmark"></i> ' + _esc(res.message) + '</span>';
+        testResult.innerHTML = `<span style="color:var(--color-danger)"><i class="fa-solid fa-circle-xmark"></i> ${_esc(res.message)}</span>`;
       }
     });
 
@@ -356,7 +356,7 @@ const ConnectionsModule = (() => {
     const projects = result.value || [];
     projSel.innerHTML =
       '<option value="">All Projects (no default)</option>' +
-      projects.map(p => '<option value="' + _esc(p.name) + '"' + (p.name === selected ? ' selected' : '') + '>' + _esc(p.name) + '</option>').join('');
+      projects.map(p => `<option value="${_esc(p.name)}"${p.name === selected ? ' selected' : ''}>${_esc(p.name)}</option>`).join('');
     projSel.disabled = false;
   }
 

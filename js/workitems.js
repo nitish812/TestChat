@@ -45,7 +45,7 @@ const WorkItemsModule = (() => {
 
     const connections = ConnectionsModule.getActive();
     const connOptions = connections.map(c =>
-      `<option value="${_esc(c.id)}">${_esc(c.name)}</option>`
+      `<option value="${c.id}">${_esc(c.name)}</option>`
     ).join('');
 
     container.innerHTML = `
@@ -707,7 +707,7 @@ const WorkItemsModule = (() => {
       const parentRels   = result.relations.filter(r => (r.rel || '').includes('Hierarchy-Reverse'));
       const childRels    = result.relations.filter(r => (r.rel || '').includes('Hierarchy-Forward'));
       const extractId    = url => (url || '').split('/').pop();
-      const relLink      = (rid) => `<a href="#" class="wi-relation-link" data-id="${_esc(rid)}" style="color:var(--color-primary)">#${rid} Open</a>`;
+      const relLink      = (rid) => `<a href="#" class="wi-relation-link" data-id="${_esc(rid)}" style="color:var(--color-primary)" aria-label="Open work item #${rid}">#${rid} <i class="fa-solid fa-arrow-up-right-from-square" style="font-size:.7rem"></i></a>`;
       const parentStr    = parentRels.length > 0
         ? parentRels.map(r => { const rid = extractId(r.url); return `<strong>Parent:</strong> ${relLink(rid)}`; }).join(', ')
         : '<span class="text-muted">None</span>';
@@ -795,7 +795,7 @@ const WorkItemsModule = (() => {
     const headers = ['ID', 'Title', 'Type', 'State', 'AssignedTo', 'Priority', 'Created', 'Updated'];
     const csvRow  = (cols) => cols.map(v => {
       const s = String(v == null ? '' : v);
-      return (s.includes(',') || s.includes('"') || s.includes('\n')) ? `"${s.replace(/"/g, '""')}"` : s;
+      return (s.includes(',') || s.includes('"') || s.includes('\n') || s.includes('\r')) ? `"${s.replace(/"/g, '""')}"` : s;
     }).join(',');
 
     const lines = [csvRow(headers)];
