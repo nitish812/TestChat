@@ -168,6 +168,21 @@ const AzureApi = (() => {
     return _fetch(_url(releaseOrgUrl, `${encodeURIComponent(project)}/_apis/release/releases`, { $top: 20 }), pat);
   }
 
+  /** Get comments/discussion for a work item. */
+  async function getWorkItemComments(orgUrl, id, pat) {
+    return _fetch(_url(orgUrl, `_apis/wit/workitems/${id}/comments`, { 'api-version': '7.0-preview.3' }), pat);
+  }
+
+  /** Create a new work item via JSON Patch. */
+  async function createWorkItem(orgUrl, project, type, pat, fields) {
+    const url = _url(orgUrl, `${encodeURIComponent(project)}/_apis/wit/workitems/${encodeURIComponent('$' + type)}`);
+    return _fetch(url, pat, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json-patch+json' },
+      body: JSON.stringify(fields),
+    });
+  }
+
   // ─────────────────────────────────────────────────────────────
   // Helpers
   // ─────────────────────────────────────────────────────────────
@@ -191,5 +206,7 @@ const AzureApi = (() => {
     getBuildRuns,
     getReleaseDefinitions,
     getReleases,
+    getWorkItemComments,
+    createWorkItem,
   };
 })();

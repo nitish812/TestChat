@@ -4,19 +4,63 @@
  * Shows aggregate stats across all active connections:
  * total orgs, total projects, recent builds, health indicators.
  * Uses CSS-only charts (progress bars) — no external chart library.
+ *
+ * Improvements:
+ *  #15 Customizable widgets (drag & drop)
+ *  #16 Date range filter
+ *  #17 Export as PDF
  */
 
 const DashboardModule = (() => {
+  const WIDGET_ORDER_KEY = 'ado_widget_order';
+
+  // #16 Date range filter state (days, 0 = all time)
+  let _dateRange = 30;
+
   // ─── Public ────────────────────────────────────────────────────
 
   async function render(container) {
+    // #17 Inject print styles once
+    _ensurePrintStyles();
+
     container.innerHTML = `
-      <div class="page-title"><i class="fa-solid fa-house"></i> Dashboard</div>
+      <div class="page-title" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
+        <span><i class="fa-solid fa-house"></i> Dashboard</span>
+        <button class="btn btn-secondary btn-sm" id="dash-export-pdf" style="margin-top:0">
+          <i class="fa-solid fa-print"></i> Export PDF
+        </button>
+      </div>
       <p class="page-subtitle">Centralized overview of all your Azure DevOps organizations.</p>
+
+      <!-- #16 Date range filter bar -->
+      <div class="filter-bar mb-16" id="dash-filter-bar">
+        <select id="dash-date-range">
+          <option value="7">Last 7 days</option>
+          <option value="30" selected>Last 30 days</option>
+          <option value="90">Last 90 days</option>
+          <option value="0">All time</option>
+        </select>
+        <button class="btn btn-secondary btn-sm" id="dash-apply-range">
+          <i class="fa-solid fa-filter"></i> Apply
+        </button>
+      </div>
+
       <div id="dash-content">
         <div class="loading-state"><div class="spinner spinner-lg"></div><p>Gathering data…</p></div>
       </div>
     `;
+
+    // Restore saved date range
+    container.querySelector('#dash-date-range').value = String(_dateRange);
+
+    // #16 Apply button
+    container.querySelector('#dash-apply-range').addEventListener('click', () => {
+      _dateRange = parseInt(container.querySelector('#dash-date-range').value, 10);
+      _loadData(container);
+    });
+
+    // #17 Export PDF
+    container.querySelector('#dash-export-pdf').addEventListener('click', () => window.print());
 
     await _loadData(container);
   }
@@ -26,6 +70,25 @@ const DashboardModule = (() => {
   }
 
   // ─── Private ───────────────────────────────────────────────────
+
+  // #17 Print styles injected once into <head>
+  function _ensurePrintStyles() {
+    if (document.getElementById('dash-print-styles')) return;
+    const style = document.createElement('style');
+    style.id = 'dash-print-styles';
+    style.textContent = `
+      @media print {
+        .sidebar, .top-header, #toast-container, nav.breadcrumb,
+        .btn, button, #dash-filter-bar, #dash-export-pdf,
+        .filter-bar, .pagination { display: none !important; }
+        .main-content { grid-column: 1 / -1 !important; padding: 0 !important; }
+        body { grid-template-columns: 1fr !important; grid-template-areas: "main" !important; }
+        .card { page-break-inside: avoid; }
+        .stats-grid { page-break-after: always; }
+      }
+    `;
+    document.head.appendChild(style);
+  }
 
   async function _loadData(container) {
     const connections = ConnectionsModule.getActive();
@@ -46,6 +109,9 @@ const DashboardModule = (() => {
     // Fetch all org data in parallel
     const orgResults = await Promise.all(connections.map(conn => _fetchOrgData(conn)));
 
+    // #16 Filter builds by date range
+    const cutoff = _dateRange > 0 ? Date.now() - _dateRange * 24 * 60 * 60 * 1000 : null;
+
     // Aggregate totals
     let totalProjects = 0;
     let totalBuilds   = 0;
@@ -56,8 +122,17 @@ const DashboardModule = (() => {
 
     orgResults.forEach(org => {
       totalProjects += org.projectCount;
-      totalBuilds   += org.builds.length;
-      org.builds.forEach(b => {
+
+      // Apply date range filter
+      const builds = cutoff
+        ? org.builds.filter(b => {
+            const t = b.finishTime || b.startTime;
+            return t ? new Date(t).getTime() >= cutoff : false;
+          })
+        : org.builds;
+
+      totalBuilds   += builds.length;
+      builds.forEach(b => {
         const r = (b.result || '').toLowerCase();
         const s = (b.status || '').toLowerCase();
         if (r === 'succeeded') buildSucceeded++;
@@ -65,7 +140,7 @@ const DashboardModule = (() => {
         else if (s === 'inprogress') buildInProg++;
       });
       // Add to activity feed
-      org.builds.slice(0, 3).forEach(b => {
+      builds.slice(0, 3).forEach(b => {
         recentActivity.push({
           time:  b.finishTime || b.startTime,
           org:   org.name,
@@ -82,33 +157,35 @@ const DashboardModule = (() => {
 
     const buildsPct = (n) => totalBuilds > 0 ? Math.round(n / totalBuilds * 100) : 0;
 
+    // #15 Read saved widget order
+    const defaultOrder = ['orgs', 'projects', 'succeeded', 'failed', 'inprog', 'total'];
+    let widgetOrder;
+    try { widgetOrder = JSON.parse(localStorage.getItem(WIDGET_ORDER_KEY) || 'null'); } catch { widgetOrder = null; }
+    if (!widgetOrder || widgetOrder.length !== defaultOrder.length) widgetOrder = defaultOrder;
+
+    const widgetData = {
+      orgs:      { key: 'orgs',      value: connections.length, color: 'var(--color-primary)',  icon: 'fa-plug',         label: 'Connected Orgs' },
+      projects:  { key: 'projects',  value: totalProjects,      color: 'var(--color-info)',     icon: 'fa-folder-open',  label: 'Total Projects' },
+      succeeded: { key: 'succeeded', value: buildSucceeded,     color: 'var(--color-success)',  icon: 'fa-circle-check', label: 'Builds Succeeded' },
+      failed:    { key: 'failed',    value: buildFailed,        color: 'var(--color-danger)',   icon: 'fa-circle-xmark', label: 'Builds Failed' },
+      inprog:    { key: 'inprog',    value: buildInProg,        color: 'var(--color-warning)',  icon: 'fa-spinner fa-spin', label: 'In Progress' },
+      total:     { key: 'total',     value: totalBuilds,        color: 'var(--text-secondary)', icon: 'fa-rocket',       label: 'Total Build Runs' },
+    };
+
+    const statsHtml = widgetOrder.map(k => {
+      const w = widgetData[k];
+      if (!w) return '';
+      return `
+        <div class="stat-card" draggable="true" data-widget="${w.key}">
+          <div class="stat-value" style="color:${w.color}">${w.value}</div>
+          <div class="stat-label"><i class="fa-solid ${w.icon}"></i> ${w.label}</div>
+        </div>`;
+    }).join('');
+
     content.innerHTML = `
-      <!-- Stats Row -->
-      <div class="stats-grid">
-        <div class="stat-card">
-          <div class="stat-value" style="color:var(--color-primary)">${connections.length}</div>
-          <div class="stat-label"><i class="fa-solid fa-plug"></i> Connected Orgs</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-value" style="color:var(--color-info)">${totalProjects}</div>
-          <div class="stat-label"><i class="fa-solid fa-folder-open"></i> Total Projects</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-value" style="color:var(--color-success)">${buildSucceeded}</div>
-          <div class="stat-label"><i class="fa-solid fa-circle-check"></i> Builds Succeeded</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-value" style="color:var(--color-danger)">${buildFailed}</div>
-          <div class="stat-label"><i class="fa-solid fa-circle-xmark"></i> Builds Failed</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-value" style="color:var(--color-warning)">${buildInProg}</div>
-          <div class="stat-label"><i class="fa-solid fa-spinner fa-spin"></i> In Progress</div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-value" style="color:var(--text-secondary)">${totalBuilds}</div>
-          <div class="stat-label"><i class="fa-solid fa-rocket"></i> Total Build Runs</div>
-        </div>
+      <!-- #15 Stats Row (draggable) -->
+      <div id="dash-widgets" class="stats-grid">
+        ${statsHtml}
       </div>
 
       <!-- Build health bar -->
@@ -167,6 +244,9 @@ const DashboardModule = (() => {
       </div>
     `;
 
+    // #15 Drag-and-drop for stat cards
+    _bindWidgetDrag(content.querySelector('#dash-widgets'));
+
     // Responsive: stack columns on narrow screens
     const dashCols = content.querySelector('.dash-cols');
     if (dashCols) {
@@ -177,6 +257,51 @@ const DashboardModule = (() => {
       });
       obs.observe(dashCols.parentElement);
     }
+  }
+
+  // #15 Drag-and-drop handlers
+  function _bindWidgetDrag(container) {
+    if (!container) return;
+    let dragging = null;
+
+    container.addEventListener('dragstart', e => {
+      dragging = e.target.closest('[data-widget]');
+      if (dragging) dragging.style.opacity = '0.5';
+    });
+
+    container.addEventListener('dragend', () => {
+      if (dragging) dragging.style.opacity = '';
+      container.querySelectorAll('.drag-over').forEach(el => el.classList.remove('drag-over'));
+      dragging = null;
+    });
+
+    container.addEventListener('dragover', e => {
+      e.preventDefault();
+      const target = e.target.closest('[data-widget]');
+      container.querySelectorAll('.drag-over').forEach(el => el.classList.remove('drag-over'));
+      if (target && target !== dragging) target.classList.add('drag-over');
+    });
+
+    container.addEventListener('drop', e => {
+      e.preventDefault();
+      const target = e.target.closest('[data-widget]');
+      if (!target || !dragging || target === dragging) return;
+      target.classList.remove('drag-over');
+
+      // Reorder in DOM
+      const cards = [...container.querySelectorAll('[data-widget]')];
+      const fromIdx = cards.indexOf(dragging);
+      const toIdx   = cards.indexOf(target);
+      if (fromIdx < toIdx) {
+        container.insertBefore(dragging, target.nextSibling);
+      } else {
+        container.insertBefore(dragging, target);
+      }
+
+      // Persist new order
+      const newOrder = [...container.querySelectorAll('[data-widget]')].map(el => el.dataset.widget);
+      localStorage.setItem(WIDGET_ORDER_KEY, JSON.stringify(newOrder));
+    });
   }
 
   async function _fetchOrgData(conn) {

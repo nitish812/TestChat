@@ -3,11 +3,29 @@
  *
  * Fetches all projects from active connections and renders them
  * in a card-based grid with search and org filter.
+ *
+ * Improvement #8: Favorite/Pin Projects
  */
 
 const ProjectsModule = (() => {
+  const PINNED_KEY = 'ado_pinned_projects';
+
   let _projects = [];   // { project, connectionId, connectionName, orgUrl, pat }
   let _loading  = false;
+
+  // ─── Pin helpers ───────────────────────────────────────────────
+
+  function _loadPinned() {
+    try { return new Set(JSON.parse(localStorage.getItem(PINNED_KEY) || '[]')); } catch { return new Set(); }
+  }
+
+  function _savePinned(set) {
+    localStorage.setItem(PINNED_KEY, JSON.stringify([...set]));
+  }
+
+  function _pinKey(entry) {
+    return `${entry.connectionId}::${entry.project.name}`;
+  }
 
   // ─── Public ────────────────────────────────────────────────────
 
@@ -127,7 +145,18 @@ const ProjectsModule = (() => {
       return;
     }
 
-    grid.innerHTML = filtered.map(p => _cardHtml(p)).join('');
+    // #8 Sort pinned first
+    const pinned = _loadPinned();
+    const pinnedItems   = filtered.filter(p => pinned.has(_pinKey(p)));
+    const unpinnedItems = filtered.filter(p => !pinned.has(_pinKey(p)));
+
+    let html = '';
+    if (pinnedItems.length > 0) {
+      html += `<div class="section-title" style="grid-column:1/-1"><i class="fa-solid fa-star"></i> Pinned</div>`;
+      html += pinnedItems.map(p => _cardHtml(p, pinned)).join('');
+    }
+    html += unpinnedItems.map(p => _cardHtml(p, pinned)).join('');
+    grid.innerHTML = html;
 
     // Bind quick-action buttons
     grid.querySelectorAll('.proj-wi-btn').forEach(btn => {
@@ -147,9 +176,20 @@ const ProjectsModule = (() => {
         });
       });
     });
+
+    // #8 Pin button
+    grid.querySelectorAll('.proj-pin-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const key = btn.dataset.key;
+        const pins = _loadPinned();
+        if (pins.has(key)) { pins.delete(key); } else { pins.add(key); }
+        _savePinned(pins);
+        _applyFilter(container, selectedOrgId);
+      });
+    });
   }
 
-  function _cardHtml(entry) {
+  function _cardHtml(entry, pinned) {
     const p = entry.project;
     const visibility = p.visibility === 'public'
       ? '<span class="badge badge-success">Public</span>'
@@ -163,6 +203,9 @@ const ProjectsModule = (() => {
       ? _esc(p.description)
       : '<span class="text-muted">No description</span>';
 
+    const key     = _pinKey(entry);
+    const isPinned = pinned.has(key);
+
     return `
       <div class="project-card">
         <div class="project-card-header">
@@ -170,7 +213,12 @@ const ProjectsModule = (() => {
             <div class="project-name">${_esc(p.name)}</div>
             <div class="project-org"><i class="fa-brands fa-windows" style="font-size:.7rem"></i> ${_esc(entry.connectionName)}</div>
           </div>
-          ${visibility}
+          <div style="display:flex;align-items:center;gap:6px">
+            ${visibility}
+            <button class="btn-icon proj-pin-btn${isPinned ? ' pinned' : ''}" data-key="${_esc(key)}" title="${isPinned ? 'Unpin' : 'Pin'}">
+              <i class="fa-solid fa-thumbtack"></i>
+            </button>
+          </div>
         </div>
         <div class="project-desc">${desc}</div>
         <div class="project-meta">
