@@ -464,6 +464,49 @@ const WorkItemsModule = (() => {
 
     const orgCols = showOrgCol ? `<th data-col="org">Organization ${_sortIcon('org')}</th><th data-col="proj">Project ${_sortIcon('proj')}</th>` : '';
 
+    // #2 Build grouped tbody rows
+    const colCount = showOrgCol ? 11 : 9;
+
+    /** Build a collapsible group header `<tr>` string. */
+    function _groupHeaderRow(groupName, count, cols) {
+      const isCollapsed = _collapsedGroups.has(groupName);
+      const chevron = isCollapsed ? 'fa-chevron-right' : 'fa-chevron-down';
+      return `
+        <tr class="group-header" data-group="${_esc(groupName)}">
+          <td colspan="${cols}">
+            <button class="btn-group-toggle">
+              <i class="fa-solid ${chevron}"></i>
+              ${_esc(groupName)} (${count} item${count !== 1 ? 's' : ''})
+            </button>
+          </td>
+        </tr>`;
+    }
+
+    let tbodyHtml;
+    if (!showOrgCol) {
+      // Single project mode — one group header for the connection
+      const groupName = _context ? _context.conn.name : 'Items';
+      const isCollapsed = _collapsedGroups.has(groupName);
+      tbodyHtml =
+        _groupHeaderRow(groupName, pageItems.length, colCount) +
+        (isCollapsed ? '' : pageItems.map(w => _rowHtml(w, showOrgCol)).join(''));
+    } else {
+      // All connections mode — one group header per connection
+      const groups = {};
+      const groupOrder = [];
+      pageItems.forEach(w => {
+        const g = w._connName || 'Unknown';
+        if (!groups[g]) { groups[g] = []; groupOrder.push(g); }
+        groups[g].push(w);
+      });
+      tbodyHtml = groupOrder.map(groupName => {
+        const items = groups[groupName];
+        const isCollapsed = _collapsedGroups.has(groupName);
+        return _groupHeaderRow(groupName, items.length, colCount) +
+          (isCollapsed ? '' : items.map(w => _rowHtml(w, showOrgCol)).join(''));
+      }).join('');
+    }
+
     // #9 Select-all checkbox column
     content.innerHTML = `
       ${breadcrumb}
@@ -486,7 +529,7 @@ const WorkItemsModule = (() => {
             </tr>
           </thead>
           <tbody id="wi-tbody">
-            ${pageItems.map(w => _rowHtml(w, showOrgCol)).join('')}
+            ${tbodyHtml}
           </tbody>
         </table>
       </div>
