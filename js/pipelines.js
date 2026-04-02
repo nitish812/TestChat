@@ -265,8 +265,8 @@ const PipelinesModule = (() => {
           <tbody>
             <tr class="group-header" data-group="${_esc(groupName)}">
               <td colspan="6">
-                <button class="btn-group-toggle" style="background:none;border:none;cursor:pointer;font-weight:600;display:flex;align-items:center;gap:6px;padding:0">
-                  <i class="fa-solid ${chevron}" style="font-size:.75rem"></i>
+                <button class="btn-group-toggle">
+                  <i class="fa-solid ${chevron}"></i>
                   ${_esc(groupName)} (${filtered.length} item${filtered.length !== 1 ? 's' : ''})
                 </button>
               </td>

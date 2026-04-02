@@ -883,6 +883,23 @@ textarea:focus {
   padding: 6px 12px;
 }
 
+.btn-group-toggle {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  color: inherit;
+  font-size: inherit;
+}
+
+.btn-group-toggle i {
+  font-size: .75rem;
+}
+
 /* ---------- #17 Print / PDF export ---------- */
 @media print {
   .sidebar,
