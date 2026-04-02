@@ -106,31 +106,18 @@ const WorkItemsModule = (() => {
 
       <!-- Filters -->
       <div class="filter-bar mb-8" id="wi-filters" style="display:none">
-        <select id="wi-type-filter">
-          <option value="">All Types</option>
-          <option value="Bug">Bug</option>
-          <option value="Task">Task</option>
-          <option value="User Story">User Story</option>
-          <option value="Epic">Epic</option>
-          <option value="Feature">Feature</option>
-          <option value="Issue">Issue</option>
-          <option value="Test Case">Test Case</option>
-        </select>
-        <select id="wi-state-filter">
-          <option value="">All States</option>
-          <option value="New">New</option>
-          <option value="Active">Active</option>
-          <option value="Resolved">Resolved</option>
-          <option value="Closed">Closed</option>
-          <option value="Done">Done</option>
-        </select>
-        <select id="wi-priority-filter">
-          <option value="">All Priorities</option>
-          <option value="1">1 – Critical</option>
-          <option value="2">2 – High</option>
-          <option value="3">3 – Medium</option>
-          <option value="4">4 – Low</option>
-        </select>
+        <div class="ms-dropdown" id="wi-type-filter" data-placeholder="All Types">
+          <div class="ms-display" tabindex="0">All Types <i class="fa-solid fa-chevron-down ms-arrow"></i></div>
+          <div class="ms-panel" style="display:none"></div>
+        </div>
+        <div class="ms-dropdown" id="wi-state-filter" data-placeholder="All States">
+          <div class="ms-display" tabindex="0">All States <i class="fa-solid fa-chevron-down ms-arrow"></i></div>
+          <div class="ms-panel" style="display:none"></div>
+        </div>
+        <div class="ms-dropdown" id="wi-priority-filter" data-placeholder="All Priorities">
+          <div class="ms-display" tabindex="0">All Priorities <i class="fa-solid fa-chevron-down ms-arrow"></i></div>
+          <div class="ms-panel" style="display:none"></div>
+        </div>
         <input type="text" id="wi-search" placeholder="🔍 Search title…" style="min-width:160px" />
         <button class="btn btn-secondary btn-sm" id="wi-apply-filter-btn">
           <i class="fa-solid fa-filter"></i> Apply
@@ -250,6 +237,8 @@ const WorkItemsModule = (() => {
       if (e.key === 'Enter' && e.target.id === 'wi-search') { _currentPage = 1; _renderTable(container); }
     });
 
+    _initMultiSelectToggle(container);
+
     // #6 Keyboard navigation on #wi-content
     container.querySelector('#wi-content').addEventListener('keydown', e => {
       const focused = document.activeElement;
@@ -299,8 +288,7 @@ const WorkItemsModule = (() => {
     content.innerHTML = '<div class="loading-state"><div class="spinner spinner-lg"></div><p>Loading work items…</p></div>';
     container.querySelector('#wi-filters').style.display = 'none';
 
-    const filters = _getFilters(container);
-    const result  = await AzureApi.getWorkItems(conn.orgUrl, project, conn.pat, filters);
+    const result  = await AzureApi.getWorkItems(conn.orgUrl, project, conn.pat, {});
 
     if (result.error) {
       content.innerHTML = `
@@ -316,6 +304,7 @@ const WorkItemsModule = (() => {
     container.querySelector('#wi-filters').style.display = '';
     // #13 Show create panel when context is set
     container.querySelector('#wi-create-panel').style.display = '';
+    _populateFiltersFromData(container);
     _renderTable(container);
   }
 
@@ -366,31 +355,149 @@ const WorkItemsModule = (() => {
     _items = allItems;
     _allSummary = { total: allItems.length, connCount: activeConns.length - failCount, failCount };
     container.querySelector('#wi-filters').style.display = '';
+    _populateFiltersFromData(container);
     _renderTable(container);
   }
 
   function _getFilters(container) {
+    function getSelected(id) {
+      const panel = container.querySelector(`#${id} .ms-panel`);
+      if (!panel) return [];
+      return [...panel.querySelectorAll('input[type=checkbox]:checked')].map(c => c.value);
+    }
     return {
-      type:     container.querySelector('#wi-type-filter')?.value || '',
-      state:    container.querySelector('#wi-state-filter')?.value || '',
-      priority: container.querySelector('#wi-priority-filter')?.value || '',
+      types:      getSelected('wi-type-filter'),
+      states:     getSelected('wi-state-filter'),
+      priorities: getSelected('wi-priority-filter'),
     };
   }
 
   function _getFilteredItems(container) {
-    const search    = (container.querySelector('#wi-search')?.value || '').toLowerCase();
-    const typeF     = container.querySelector('#wi-type-filter')?.value || '';
-    const stateF    = container.querySelector('#wi-state-filter')?.value || '';
-    const priorityF = container.querySelector('#wi-priority-filter')?.value || '';
+    const search  = (container.querySelector('#wi-search')?.value || '').toLowerCase();
+    const filters = _getFilters(container);
 
     let filtered = _items;
     if (search) filtered = filtered.filter(w =>
       (w.fields['System.Title'] || '').toLowerCase().includes(search)
     );
-    if (typeF)     filtered = filtered.filter(w => (w.fields['System.WorkItemType'] || '') === typeF);
-    if (stateF)    filtered = filtered.filter(w => (w.fields['System.State'] || '') === stateF);
-    if (priorityF) filtered = filtered.filter(w => String(w.fields['Microsoft.VSTS.Common.Priority'] || '') === priorityF);
+    if (filters.types.length > 0) {
+      filtered = filtered.filter(w => filters.types.includes(w.fields['System.WorkItemType'] || ''));
+    }
+    if (filters.states.length > 0) {
+      filtered = filtered.filter(w => filters.states.includes(w.fields['System.State'] || ''));
+    }
+    if (filters.priorities.length > 0) {
+      filtered = filtered.filter(w =>
+        filters.priorities.includes(String(w.fields['Microsoft.VSTS.Common.Priority'] || ''))
+      );
+    }
     return filtered;
+  }
+
+  function _buildMultiSelect(dropdownEl, options, selectedValues) {
+    const panel       = dropdownEl.querySelector('.ms-panel');
+    const placeholder = dropdownEl.dataset.placeholder || 'All';
+
+    panel.innerHTML = `
+      <div class="ms-controls">
+        <button type="button" class="ms-select-all">All</button>
+        <button type="button" class="ms-clear">Clear</button>
+      </div>
+      <div class="ms-options">
+        ${options.map(o => `
+          <label class="ms-option">
+            <input type="checkbox" value="${_esc(o.value)}" ${selectedValues.has(o.value) ? 'checked' : ''} />
+            ${_esc(o.label)}
+          </label>
+        `).join('')}
+      </div>
+    `;
+
+    function updateDisplay() {
+      const checked = [...panel.querySelectorAll('input[type=checkbox]:checked')].map(c => c.value);
+      const display = dropdownEl.querySelector('.ms-display');
+      const escapedPlaceholder = _esc(placeholder);
+      if (checked.length === 0) {
+        display.innerHTML = `${escapedPlaceholder} <i class="fa-solid fa-chevron-down ms-arrow"></i>`;
+      } else if (checked.length === options.length) {
+        display.innerHTML = `All ${escapedPlaceholder} <i class="fa-solid fa-chevron-down ms-arrow"></i>`;
+      } else {
+        display.innerHTML = `${checked.length} selected <i class="fa-solid fa-chevron-down ms-arrow"></i>`;
+      }
+    }
+
+    panel.querySelector('.ms-select-all').addEventListener('click', () => {
+      panel.querySelectorAll('input[type=checkbox]').forEach(c => c.checked = true);
+      updateDisplay();
+    });
+    panel.querySelector('.ms-clear').addEventListener('click', () => {
+      panel.querySelectorAll('input[type=checkbox]').forEach(c => c.checked = false);
+      updateDisplay();
+    });
+    panel.querySelectorAll('input[type=checkbox]').forEach(cb => {
+      cb.addEventListener('change', updateDisplay);
+    });
+
+    updateDisplay();
+  }
+
+  function _initMultiSelectToggle(container) {
+    container.addEventListener('click', e => {
+      const trigger = e.target.closest('.ms-display');
+      if (!trigger) {
+        if (!e.target.closest('.ms-panel')) {
+          container.querySelectorAll('.ms-panel').forEach(p => p.style.display = 'none');
+          container.querySelectorAll('.ms-arrow').forEach(a => {
+            a.classList.remove('fa-chevron-up');
+            a.classList.add('fa-chevron-down');
+          });
+        }
+        return;
+      }
+      const dropdown = trigger.closest('.ms-dropdown');
+      const panel    = dropdown.querySelector('.ms-panel');
+      const arrow    = dropdown.querySelector('.ms-arrow');
+      const isOpen   = panel.style.display !== 'none';
+
+      container.querySelectorAll('.ms-panel').forEach(p => p.style.display = 'none');
+      container.querySelectorAll('.ms-arrow').forEach(a => {
+        a.classList.remove('fa-chevron-up');
+        a.classList.add('fa-chevron-down');
+      });
+
+      if (!isOpen) {
+        panel.style.display = 'block';
+        arrow.classList.remove('fa-chevron-down');
+        arrow.classList.add('fa-chevron-up');
+      }
+    });
+  }
+
+  function _populateFiltersFromData(container) {
+    const types      = [...new Set(_items.map(w => w.fields['System.WorkItemType']).filter(Boolean))].sort();
+    const states     = [...new Set(_items.map(w => w.fields['System.State']).filter(Boolean))].sort();
+    const priorities = [
+      { value: '1', label: '1 – Critical' },
+      { value: '2', label: '2 – High' },
+      { value: '3', label: '3 – Medium' },
+      { value: '4', label: '4 – Low' },
+    ];
+
+    _buildMultiSelect(
+      container.querySelector('#wi-type-filter'),
+      types.map(t => ({ value: t, label: t })),
+      new Set()
+    );
+    _buildMultiSelect(
+      container.querySelector('#wi-state-filter'),
+      states.map(s => ({ value: s, label: s })),
+      new Set()
+    );
+    _buildMultiSelect(
+      container.querySelector('#wi-priority-filter'),
+      priorities,
+      new Set()
+    );
   }
 
   function _sortItems(items) {
