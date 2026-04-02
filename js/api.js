@@ -98,10 +98,9 @@ const AzureApi = (() => {
   async function getWorkItems(orgUrl, project, pat, filters = {}) {
     const conditions = ['[System.TeamProject] = @project'];
 
-    if (filters.type)       conditions.push(`[System.WorkItemType] = '${_esc(filters.type)}'`);
-    if (filters.state)      conditions.push(`[System.State] = '${_esc(filters.state)}'`);
+    // Note: type, state, priority filters are applied client-side
+    // to support multi-select and dynamic filter population.
     if (filters.assignedTo) conditions.push(`[System.AssignedTo] = '${_esc(filters.assignedTo)}'`);
-    if (filters.priority)   conditions.push(`[Microsoft.VSTS.Common.Priority] = ${parseInt(filters.priority, 10)}`);
 
     const wiql = `SELECT [System.Id] FROM WorkItems WHERE ${conditions.join(' AND ')} ORDER BY [System.ChangedDate] DESC`;
 
